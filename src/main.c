@@ -13,6 +13,7 @@ int main(int argc, char **argv)
         return 1;
 
     elf_print_header(&elf);
+    elf_print_sections(&elf);
 
     elf_free(&elf);
     return 0;

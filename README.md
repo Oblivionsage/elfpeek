@@ -1,6 +1,6 @@
 # elfpeek
 
-Minimal ELF64 inspector written in C for quick binary layout inspection.
+Minimal ELF64 inspector written in C for quick binary layout inspection
 
 ## Build
 
@@ -10,8 +10,7 @@ make
 
 This builds a single `elfpeek` binary (`gcc -std=c11 -Wall -Wextra -O2`).
 
-No external dependencies; only glibc and `<elf.h>`.  
-Currently supports ELF64 little-endian binaries (Linux x86_64 style).
+No external dependencies; only glibc and `<elf.h>`. Currently supports ELF64 little-endian binaries (Linux x86_64 style)
 
 ## Usage
 

@@ -11,6 +11,11 @@ make
 ## Usage
 ```
 ./elfpeek <elf-file>
+```
+
+## Example
+```
+$ ./elfpeek /bin/ls
 
 [ELF HEADER]
   Type        : DYN (Shared object)
@@ -51,12 +56,6 @@ make
   [27] .gnu_debugaltlink   TYPE=PROGBITS    OFF=0x026280  SIZE=0x49
   [28] .gnu_debuglink      TYPE=PROGBITS    OFF=0x0262cc  SIZE=0x34
   [29] .shstrtab           TYPE=STRTAB      OFF=0x026300  SIZE=0x126
-```
-
-## Example
-```
-$ ./elfpeek /bin/ls
-
 ```
 
 Sections are colored by flags:

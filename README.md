@@ -48,6 +48,11 @@ The code is intentionally small and straightforward C, so it also works as a “
     - which section it's in
     - corresponding file offset
 
+## Screenshot
+
+<img width="1104" height="708" alt="elfpeek2" src="https://github.com/user-attachments/assets/dcef19ac-5101-4c40-afd0-2639483d2b7c" />
+
+
 ## Example
 
 ```bash

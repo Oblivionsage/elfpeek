@@ -173,7 +173,15 @@ void elf_print_sections(const ElfFile *elf)
         char flags[8];
         format_flags(s->sh_flags, flags, sizeof(flags));
 
-        printf("  [%2u] %-18s  TYPE=%-10s", i, name, sh_type_str(s->sh_type));
+        const char *col = "";
+        if (s->sh_flags & SHF_EXECINSTR)
+            col = COL(CLR_GRN);
+        else if (s->sh_flags & SHF_WRITE)
+            col = COL(CLR_YEL);
+        else if (s->sh_flags & SHF_ALLOC)
+            col = COL(CLR_CYN);
+
+        printf("  %s[%2u] %-18s%s  TYPE=%-10s", col, i, name, COL(CLR_RST), sh_type_str(s->sh_type));
 
         if (flags[0])
             printf("  FLAGS=%-3s", flags);

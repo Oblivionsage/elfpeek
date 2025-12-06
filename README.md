@@ -8,7 +8,7 @@ Minimal ELF64 inspector written in C for quick binary layout inspection
 make
 ```
 
-This builds a single `elfpeek` binary (`gcc -std=c11 -Wall -Wextra -O2`).
+This builds a single `elfpeek` binary `(gcc -std=c11 -Wall -Wextra -O2)`
 
 No external dependencies; only glibc and `<elf.h>`. Currently supports ELF64 little-endian binaries (Linux x86_64 style)
 
@@ -41,7 +41,7 @@ The code is intentionally small and straightforward C, so it also works as a “
 - ELF header parsing (type, machine, entry point)
 - Program headers (segments + permissions)
 - Section headers (with simple flag-based coloring)
-- Dynamic symbol table (`.dynsym`) dump (FUNC / OBJECT)
+- Dynamic symbol table `(.dynsym)` dump (FUNC / OBJECT)
 - Address resolver:
   - Given a VA, show:
     - which segment it's in

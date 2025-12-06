@@ -1,30 +1,44 @@
 # elfpeek
 
-Minimal ELF64 parser for inspecting headers, sections, and symbols.
+Minimal ELF64 inspector written in C for quick binary layout inspection.
 
 ## Build
 
-```
+```bash
 make
 ```
 
+This builds a single `elfpeek` binary (`gcc -std=c11 -Wall -Wextra -O2`).
+
+No external dependencies; only glibc and `<elf.h>`.  
+Currently supports ELF64 little-endian binaries (Linux x86_64 style).
+
 ## Usage
 
-```
+```bash
 ./elfpeek <elf-file> [addr]
 ```
+
+- `elf-file` – path to an ELF64 binary
+- `addr` (optional) – virtual address to resolve
+  - `0x...` → hex
+  - otherwise → decimal
 
 ## Features
 
 - ELF header parsing (type, machine, entry point)
-- Program headers (segments with permissions)
-- Section headers (with flag-based coloring)
-- Dynamic symbol table (.dynsym)
-- Address resolver (find segment/section for any address)
+- Program headers (segments + permissions)
+- Section headers (with simple flag-based coloring)
+- Dynamic symbol table (`.dynsym`) dump (FUNC / OBJECT)
+- Address resolver:
+  - Given a VA, show:
+    - which segment it's in
+    - which section it's in
+    - corresponding file offset
 
 ## Example
 
-```
+```bash
 $ ./elfpeek /bin/ls
 
 [ELF HEADER]
@@ -53,7 +67,7 @@ $ ./elfpeek /bin/ls
 
 Address resolution:
 
-```
+```bash
 $ ./elfpeek /bin/ls 0x4740
 
 [ADDR]
@@ -65,8 +79,16 @@ $ ./elfpeek /bin/ls 0x4740
 
 ## Colors
 
-Sections are colored by flags:
-- Green: executable (X)
-- Yellow: writable (W)  
-- Cyan: read-only allocated (A)
+Section names are lightly colored by flags:
 
+- **Green** – executable (X)
+- **Yellow** – writable (W)
+- **Cyan** – read-only allocated (A)
+
+The idea is to keep output readable in a normal terminal without turning it into a rainbow.
+
+## TODO
+
+- [ ] 32-bit ELF support
+- [ ] `.symtab` parsing
+- [ ] Big-endian support

@@ -15,6 +15,7 @@ int main(int argc, char **argv)
     elf_print_header(&elf);
     elf_print_phdrs(&elf);
     elf_print_sections(&elf);
+    elf_print_dynsym(&elf, argv[1]);
 
     elf_free(&elf);
     return 0;

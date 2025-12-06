@@ -286,6 +286,102 @@ void elf_print_sections(const ElfFile *elf)
     }
 }
 
+int elf_print_dynsym(const ElfFile *elf, const char *path)
+{
+    if (elf->shnum == 0)
+        return 0;
+
+    // find .dynsym section
+    int dynsym_idx = -1;
+    for (uint16_t i = 0; i < elf->shnum; i++) {
+        if (elf->sections[i].sh_type == SHT_DYNSYM) {
+            dynsym_idx = i;
+            break;
+        }
+    }
+
+    if (dynsym_idx < 0) {
+        fprintf(stderr, "  %swarn:%s no .dynsym section\n", COL(CLR_YEL), COL(CLR_RST));
+        return 0;
+    }
+
+    Elf64_Shdr *dynsym = &elf->sections[dynsym_idx];
+    uint16_t strtab_idx = dynsym->sh_link;
+
+    if (strtab_idx >= elf->shnum) {
+        fprintf(stderr, "  %swarn:%s invalid dynstr index\n", COL(CLR_YEL), COL(CLR_RST));
+        return 0;
+    }
+
+    Elf64_Shdr *dynstr = &elf->sections[strtab_idx];
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp)
+        return -1;
+
+    // read dynstr
+    char *strtab = malloc(dynstr->sh_size);
+    if (!strtab) {
+        fclose(fp);
+        return -1;
+    }
+    fseek(fp, dynstr->sh_offset, SEEK_SET);
+    if (fread(strtab, 1, dynstr->sh_size, fp) != dynstr->sh_size) {
+        free(strtab);
+        fclose(fp);
+        return -1;
+    }
+
+    // read dynsym entries
+    size_t sym_count = dynsym->sh_size / sizeof(Elf64_Sym);
+    Elf64_Sym *syms = malloc(dynsym->sh_size);
+    if (!syms) {
+        free(strtab);
+        fclose(fp);
+        return -1;
+    }
+    fseek(fp, dynsym->sh_offset, SEEK_SET);
+    if (fread(syms, sizeof(Elf64_Sym), sym_count, fp) != sym_count) {
+        free(syms);
+        free(strtab);
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+
+    printf("\n%s[DYNSYM]%s\n", COL(CLR_CYN), COL(CLR_RST));
+
+    for (size_t i = 1; i < sym_count; i++) {
+        Elf64_Sym *s = &syms[i];
+        unsigned char type = ELF64_ST_TYPE(s->st_info);
+
+        const char *type_str;
+        switch (type) {
+        case STT_FUNC:   type_str = "FUNC";   break;
+        case STT_OBJECT: type_str = "OBJECT"; break;
+        case STT_NOTYPE: type_str = "NOTYPE"; break;
+        default:         type_str = "OTHER";  break;
+        }
+
+        const char *name = "<noname>";
+        if (s->st_name < dynstr->sh_size)
+            name = strtab + s->st_name;
+
+        if (type == STT_FUNC || type == STT_OBJECT) {
+            printf("  %016lx  %-6s  %4lu  %s\n",
+                   (unsigned long)s->st_value,
+                   type_str,
+                   (unsigned long)s->st_size,
+                   name);
+        }
+    }
+
+    free(syms);
+    free(strtab);
+    return 0;
+}
+
 void elf_free(ElfFile *elf)
 {
     free(elf->phdrs);

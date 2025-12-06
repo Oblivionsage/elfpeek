@@ -19,6 +19,7 @@ void elf_print_header(const ElfFile *elf);
 void elf_print_phdrs(const ElfFile *elf);
 void elf_print_sections(const ElfFile *elf);
 int elf_print_dynsym(const ElfFile *elf, const char *path);
+void elf_resolve_addr(const ElfFile *elf, uint64_t addr);
 void elf_free(ElfFile *elf);
 
 #endif

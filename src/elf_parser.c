@@ -291,7 +291,6 @@ int elf_print_dynsym(const ElfFile *elf, const char *path)
     if (elf->shnum == 0)
         return 0;
 
-    // find .dynsym section
     int dynsym_idx = -1;
     for (uint16_t i = 0; i < elf->shnum; i++) {
         if (elf->sections[i].sh_type == SHT_DYNSYM) {
@@ -319,7 +318,6 @@ int elf_print_dynsym(const ElfFile *elf, const char *path)
     if (!fp)
         return -1;
 
-    // read dynstr
     char *strtab = malloc(dynstr->sh_size);
     if (!strtab) {
         fclose(fp);
@@ -332,7 +330,6 @@ int elf_print_dynsym(const ElfFile *elf, const char *path)
         return -1;
     }
 
-    // read dynsym entries
     size_t sym_count = dynsym->sh_size / sizeof(Elf64_Sym);
     Elf64_Sym *syms = malloc(dynsym->sh_size);
     if (!syms) {
@@ -380,6 +377,52 @@ int elf_print_dynsym(const ElfFile *elf, const char *path)
     free(syms);
     free(strtab);
     return 0;
+}
+
+void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
+{
+    printf("\n%s[ADDR]%s\n", COL(CLR_CYN), COL(CLR_RST));
+    printf("  Address  : 0x%016lx\n", (unsigned long)addr);
+
+    // find segment
+    int seg_idx = -1;
+    for (uint16_t i = 0; i < elf->phnum; i++) {
+        const Elf64_Phdr *p = &elf->phdrs[i];
+        if (p->p_type == PT_LOAD && addr >= p->p_vaddr && addr < p->p_vaddr + p->p_memsz) {
+            seg_idx = i;
+            break;
+        }
+    }
+
+    if (seg_idx >= 0) {
+        const Elf64_Phdr *p = &elf->phdrs[seg_idx];
+        char flags[4];
+        format_phdr_flags(p->p_flags, flags);
+        printf("  Segment  : [%2d] %-12s  %s  VADDR=0x%016lx\n",
+               seg_idx, ph_type_str(p->p_type), flags, (unsigned long)p->p_vaddr);
+
+        uint64_t file_off = p->p_offset + (addr - p->p_vaddr);
+        printf("  File off : 0x%08lx\n", (unsigned long)file_off);
+    } else {
+        printf("  Segment  : (not in any PT_LOAD segment)\n");
+    }
+
+    // find section
+    int sec_idx = -1;
+    for (uint16_t i = 0; i < elf->shnum; i++) {
+        const Elf64_Shdr *s = &elf->sections[i];
+        if ((s->sh_flags & SHF_ALLOC) && addr >= s->sh_addr && addr < s->sh_addr + s->sh_size) {
+            sec_idx = i;
+            break;
+        }
+    }
+
+    if (sec_idx >= 0 && elf->shstrtab) {
+        const char *name = elf->shstrtab + elf->sections[sec_idx].sh_name;
+        printf("  Section  : [%2d] %s\n", sec_idx, name);
+    } else {
+        printf("  Section  : (no matching section)\n");
+    }
 }
 
 void elf_free(ElfFile *elf)

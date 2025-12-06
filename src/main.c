@@ -12,6 +12,8 @@ int main(int argc, char **argv)
     if (elf_parse_file(argv[1], &elf) != 0)
         return 1;
 
+    elf_print_header(&elf);
+
     elf_free(&elf);
     return 0;
 }

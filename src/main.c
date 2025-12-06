@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "elf_parser.h"
 
 int main(int argc, char **argv)
 {
@@ -7,6 +8,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("file: %s\n", argv[1]);
+    ElfFile elf;
+    if (elf_parse_file(argv[1], &elf) != 0)
+        return 1;
+
+    elf_free(&elf);
     return 0;
 }

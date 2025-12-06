@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2
 INCLUDES = -Iinclude
 
-SRC = src/main.c
+SRC = src/main.c src/elf_parser.c
 TARGET = elfpeek
 
 all: $(TARGET)

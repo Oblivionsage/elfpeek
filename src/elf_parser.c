@@ -53,12 +53,38 @@ static const char *sh_type_str(uint32_t type)
     }
 }
 
+static const char *ph_type_str(uint32_t type)
+{
+    switch (type) {
+    case PT_NULL:    return "NULL";
+    case PT_LOAD:    return "LOAD";
+    case PT_DYNAMIC: return "DYNAMIC";
+    case PT_INTERP:  return "INTERP";
+    case PT_NOTE:    return "NOTE";
+    case PT_PHDR:    return "PHDR";
+    case PT_TLS:     return "TLS";
+    case PT_GNU_EH_FRAME: return "GNU_EH_FRAME";
+    case PT_GNU_STACK:    return "GNU_STACK";
+    case PT_GNU_RELRO:    return "GNU_RELRO";
+    case PT_GNU_PROPERTY: return "GNU_PROPERTY";
+    default:         return "UNKNOWN";
+    }
+}
+
 static void format_flags(uint64_t flags, char *buf, size_t len)
 {
     buf[0] = '\0';
     if (flags & SHF_WRITE)     strncat(buf, "W", len - 1);
     if (flags & SHF_ALLOC)     strncat(buf, "A", len - strlen(buf) - 1);
     if (flags & SHF_EXECINSTR) strncat(buf, "X", len - strlen(buf) - 1);
+}
+
+static void format_phdr_flags(uint32_t flags, char *buf)
+{
+    buf[0] = (flags & PF_R) ? 'R' : ' ';
+    buf[1] = (flags & PF_W) ? 'W' : ' ';
+    buf[2] = (flags & PF_X) ? 'X' : ' ';
+    buf[3] = '\0';
 }
 
 int elf_parse_file(const char *path, ElfFile *out)
@@ -71,6 +97,7 @@ int elf_parse_file(const char *path, ElfFile *out)
     }
 
     memset(out, 0, sizeof(*out));
+    out->entry_sec = -1;
 
     if (fread(&out->ehdr, sizeof(out->ehdr), 1, fp) != 1) {
         fprintf(stderr, "%serror:%s failed to read elf header\n",
@@ -98,6 +125,27 @@ int elf_parse_file(const char *path, ElfFile *out)
                 COL(CLR_YEL), COL(CLR_RST));
     }
 
+    // program headers
+    out->phnum = out->ehdr.e_phnum;
+    if (out->phnum > 0) {
+        out->phdrs = malloc(out->phnum * sizeof(Elf64_Phdr));
+        if (!out->phdrs) {
+            fprintf(stderr, "%serror:%s malloc failed\n",
+                    COL(CLR_RED), COL(CLR_RST));
+            fclose(fp);
+            return -1;
+        }
+        fseek(fp, out->ehdr.e_phoff, SEEK_SET);
+        if (fread(out->phdrs, sizeof(Elf64_Phdr), out->phnum, fp) != out->phnum) {
+            fprintf(stderr, "%serror:%s truncated program headers\n",
+                    COL(CLR_RED), COL(CLR_RST));
+            free(out->phdrs);
+            fclose(fp);
+            return -1;
+        }
+    }
+
+    // section headers
     out->shnum = out->ehdr.e_shnum;
     if (out->shnum == 0) {
         fclose(fp);
@@ -122,6 +170,7 @@ int elf_parse_file(const char *path, ElfFile *out)
         return -1;
     }
 
+    // shstrtab
     uint16_t stridx = out->ehdr.e_shstrndx;
     if (stridx < out->shnum && stridx != SHN_UNDEF) {
         Elf64_Shdr *strsec = &out->sections[stridx];
@@ -132,6 +181,16 @@ int elf_parse_file(const char *path, ElfFile *out)
                 free(out->shstrtab);
                 out->shstrtab = NULL;
             }
+        }
+    }
+
+    // find entry section
+    uint64_t entry = out->ehdr.e_entry;
+    for (uint16_t i = 0; i < out->shnum; i++) {
+        Elf64_Shdr *s = &out->sections[i];
+        if (s->sh_addr && entry >= s->sh_addr && entry < s->sh_addr + s->sh_size) {
+            out->entry_sec = i;
+            break;
         }
     }
 
@@ -146,12 +205,40 @@ void elf_print_header(const ElfFile *elf)
     printf("\n%s[ELF HEADER]%s\n", COL(CLR_CYN), COL(CLR_RST));
     printf("  Type        : %s\n", elf_type_str(e->e_type));
     printf("  Machine     : %s\n", elf_machine_str(e->e_machine));
-    printf("  Entry       : 0x%016lx\n", (unsigned long)e->e_entry);
+
+    if (elf->entry_sec >= 0 && elf->shstrtab) {
+        const char *name = elf->shstrtab + elf->sections[elf->entry_sec].sh_name;
+        printf("  Entry       : 0x%016lx  (in %s)\n", (unsigned long)e->e_entry, name);
+    } else {
+        printf("  Entry       : 0x%016lx\n", (unsigned long)e->e_entry);
+    }
+
     printf("  PHDR offset : 0x%08lx (%u entries)\n",
            (unsigned long)e->e_phoff, e->e_phnum);
     printf("  SHDR offset : 0x%08lx (%u entries)\n",
            (unsigned long)e->e_shoff, e->e_shnum);
     printf("  SHSTR index : %u\n", e->e_shstrndx);
+}
+
+void elf_print_phdrs(const ElfFile *elf)
+{
+    if (elf->phnum == 0)
+        return;
+
+    printf("\n%s[PROGRAM HEADERS]%s\n", COL(CLR_CYN), COL(CLR_RST));
+
+    for (uint16_t i = 0; i < elf->phnum; i++) {
+        const Elf64_Phdr *p = &elf->phdrs[i];
+        char flags[4];
+        format_phdr_flags(p->p_flags, flags);
+
+        printf("  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%016lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n",
+               i, ph_type_str(p->p_type), flags,
+               (unsigned long)p->p_offset,
+               (unsigned long)p->p_vaddr,
+               (unsigned long)p->p_filesz,
+               (unsigned long)p->p_memsz);
+    }
 }
 
 void elf_print_sections(const ElfFile *elf)
@@ -192,12 +279,16 @@ void elf_print_sections(const ElfFile *elf)
         if (s->sh_size)
             printf("  SIZE=0x%lx", (unsigned long)s->sh_size);
 
+        if (i == elf->entry_sec)
+            printf("  %s<-- entry%s", COL(CLR_GRN), COL(CLR_RST));
+
         printf("\n");
     }
 }
 
 void elf_free(ElfFile *elf)
 {
+    free(elf->phdrs);
     free(elf->sections);
     free(elf->shstrtab);
 }

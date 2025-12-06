@@ -6,13 +6,17 @@
 
 typedef struct {
     Elf64_Ehdr ehdr;
+    Elf64_Phdr *phdrs;
     Elf64_Shdr *sections;
     char *shstrtab;
+    uint16_t phnum;
     uint16_t shnum;
+    int entry_sec;
 } ElfFile;
 
 int elf_parse_file(const char *path, ElfFile *out);
 void elf_print_header(const ElfFile *elf);
+void elf_print_phdrs(const ElfFile *elf);
 void elf_print_sections(const ElfFile *elf);
 void elf_free(ElfFile *elf);
 

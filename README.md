@@ -23,6 +23,19 @@ No external dependencies; only glibc and `<elf.h>`. Currently supports ELF64 lit
   - `0x...` → hex
   - otherwise → decimal
 
+## Why?
+
+This is not trying to replace `readelf` or `objdump`.
+
+The goal is to have a small, focused tool that answers a few common questions quickly:
+
+- *“What does the layout of this ELF actually look like?”*
+- *“Which segment/section does this virtual address belong to?”*
+- *“Where is this address in the file (offset) so I can poke it with a hex editor?”*
+- *“Where is the entry point, and which section owns it?”*
+
+The code is intentionally small and straightforward C, so it also works as a “readable ELF64 example” if you’re learning how ELF headers, sections and symbols are wired together
+
 ## Features
 
 - ELF header parsing (type, machine, entry point)

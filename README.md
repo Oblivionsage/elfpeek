@@ -116,6 +116,4 @@ The idea is to keep output readable in a normal terminal without turning it into
 
 ## TODO
 
-- [ ] 32-bit ELF support
-- [ ] Big-endian support
 - [ ] Hex dump of sections

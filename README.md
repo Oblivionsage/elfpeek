@@ -1,4 +1,4 @@
-# elfpeek
+<h1 align="center">elfpeek</h1>
 
 <p align="center">
   <img src="assets/logo.png" alt="elfpeek logo" width="600">
@@ -12,7 +12,15 @@
   <img src="https://img.shields.io/github/stars/Oblivionsage/elfpeek?style=flat-square" alt="Stars">
 </p>
 
-Minimal ELF inspector written in C for quick binary layout inspection
+<p align="center">
+  <img src="https://img.shields.io/badge/no%20dependencies-✓-brightgreen?style=flat-square" alt="No Dependencies">
+  <img src="https://img.shields.io/badge/minimal-~600%20LOC-purple?style=flat-square" alt="Minimal">
+  <img src="https://img.shields.io/badge/reverse%20engineering-tool-red?style=flat-square" alt="RE Tool">
+</p>
+
+<p align="center">
+  Minimal ELF inspector written in C for quick binary layout inspection
+</p>
 
 ![demo](assets/demo.gif)
 

@@ -1,3 +1,26 @@
+// MIT License
+
+// Copyright (c) 2025 Oblivionsage
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//SOFTWARE.
+
+// src/elf_parser.c
 #include "elf_parser.h"
 #include "colors.h"
 #include <stdio.h>
@@ -71,6 +94,18 @@ static const char *ph_type_str(uint32_t type)
     }
 }
 
+static const char *sym_type_str(unsigned char type)
+{
+    switch (type) {
+    case STT_NOTYPE:  return "NOTYPE";
+    case STT_OBJECT:  return "OBJECT";
+    case STT_FUNC:    return "FUNC";
+    case STT_SECTION: return "SECTION";
+    case STT_FILE:    return "FILE";
+    default:          return "OTHER";
+    }
+}
+
 static void format_flags(uint64_t flags, char *buf, size_t len)
 {
     buf[0] = '\0';
@@ -85,6 +120,70 @@ static void format_phdr_flags(uint32_t flags, char *buf)
     buf[1] = (flags & PF_W) ? 'W' : ' ';
     buf[2] = (flags & PF_X) ? 'X' : ' ';
     buf[3] = '\0';
+}
+
+// load symbols from a symbol table section
+static int load_symbols(FILE *fp, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec,
+                        ElfSymbolInfo **out_syms, size_t *out_count, 
+                        char **out_strtab, SymbolSource source)
+{
+    size_t sym_count = symtab_sec->sh_size / sizeof(Elf64_Sym);
+    if (sym_count == 0)
+        return 0;
+
+    // read string table
+    char *strtab = malloc(strtab_sec->sh_size);
+    if (!strtab)
+        return -1;
+    
+    fseek(fp, strtab_sec->sh_offset, SEEK_SET);
+    if (fread(strtab, 1, strtab_sec->sh_size, fp) != strtab_sec->sh_size) {
+        free(strtab);
+        return -1;
+    }
+
+    // read symbol entries
+    Elf64_Sym *raw_syms = malloc(symtab_sec->sh_size);
+    if (!raw_syms) {
+        free(strtab);
+        return -1;
+    }
+    
+    fseek(fp, symtab_sec->sh_offset, SEEK_SET);
+    if (fread(raw_syms, sizeof(Elf64_Sym), sym_count, fp) != sym_count) {
+        free(raw_syms);
+        free(strtab);
+        return -1;
+    }
+
+    // convert to our format
+    ElfSymbolInfo *syms = malloc(sym_count * sizeof(ElfSymbolInfo));
+    if (!syms) {
+        free(raw_syms);
+        free(strtab);
+        return -1;
+    }
+
+    for (size_t i = 0; i < sym_count; i++) {
+        Elf64_Sym *s = &raw_syms[i];
+        syms[i].value = s->st_value;
+        syms[i].size = s->st_size;
+        syms[i].type = ELF64_ST_TYPE(s->st_info);
+        syms[i].bind = ELF64_ST_BIND(s->st_info);
+        syms[i].shndx = s->st_shndx;
+        syms[i].source = source;
+        
+        if (s->st_name < strtab_sec->sh_size)
+            syms[i].name = strtab + s->st_name;
+        else
+            syms[i].name = "";
+    }
+
+    free(raw_syms);
+    *out_syms = syms;
+    *out_count = sym_count;
+    *out_strtab = strtab;
+    return 0;
 }
 
 int elf_parse_file(const char *path, ElfFile *out)
@@ -194,6 +293,32 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    // load .dynsym
+    for (uint16_t i = 0; i < out->shnum; i++) {
+        if (out->sections[i].sh_type == SHT_DYNSYM) {
+            uint32_t link = out->sections[i].sh_link;
+            if (link < out->shnum) {
+                load_symbols(fp, &out->sections[i], &out->sections[link],
+                            &out->dynsyms, &out->dynsym_count, &out->dynstr,
+                            SYM_SRC_DYNSYM);
+            }
+            break;
+        }
+    }
+
+    // load .symtab
+    for (uint16_t i = 0; i < out->shnum; i++) {
+        if (out->sections[i].sh_type == SHT_SYMTAB) {
+            uint32_t link = out->sections[i].sh_link;
+            if (link < out->shnum) {
+                load_symbols(fp, &out->sections[i], &out->sections[link],
+                            &out->symtab, &out->symtab_count, &out->strtab,
+                            SYM_SRC_SYMTAB);
+            }
+            break;
+        }
+    }
+
     fclose(fp);
     return 0;
 }
@@ -286,97 +411,96 @@ void elf_print_sections(const ElfFile *elf)
     }
 }
 
-int elf_print_dynsym(const ElfFile *elf, const char *path)
+static void print_symbol_table(const ElfSymbolInfo *syms, size_t count, const char *title)
 {
-    if (elf->shnum == 0)
-        return 0;
+    printf("\n%s[%s]%s\n", COL(CLR_CYN), title, COL(CLR_RST));
 
-    int dynsym_idx = -1;
-    for (uint16_t i = 0; i < elf->shnum; i++) {
-        if (elf->sections[i].sh_type == SHT_DYNSYM) {
-            dynsym_idx = i;
-            break;
-        }
+    for (size_t i = 1; i < count; i++) {
+        const ElfSymbolInfo *s = &syms[i];
+        
+        // skip useless entries
+        if (s->type != STT_FUNC && s->type != STT_OBJECT)
+            continue;
+
+        printf("  %016lx  %-6s  %4lu  %s\n",
+               (unsigned long)s->value,
+               sym_type_str(s->type),
+               (unsigned long)s->size,
+               s->name);
     }
+}
 
-    if (dynsym_idx < 0) {
+void elf_print_dynsym(const ElfFile *elf)
+{
+    if (!elf->dynsyms || elf->dynsym_count == 0) {
         fprintf(stderr, "  %swarn:%s no .dynsym section\n", COL(CLR_YEL), COL(CLR_RST));
-        return 0;
+        return;
     }
+    print_symbol_table(elf->dynsyms, elf->dynsym_count, "DYNSYM");
+}
 
-    Elf64_Shdr *dynsym = &elf->sections[dynsym_idx];
-    uint16_t strtab_idx = dynsym->sh_link;
+void elf_print_symtab(const ElfFile *elf)
+{
+    if (!elf->symtab || elf->symtab_count == 0)
+        return;
+    print_symbol_table(elf->symtab, elf->symtab_count, "SYMTAB");
+}
 
-    if (strtab_idx >= elf->shnum) {
-        fprintf(stderr, "  %swarn:%s invalid dynstr index\n", COL(CLR_YEL), COL(CLR_RST));
-        return 0;
-    }
+// find best matching symbol for addr
+static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t addr)
+{
+    const ElfSymbolInfo *best = NULL;
+    uint64_t best_dist = UINT64_MAX;
 
-    Elf64_Shdr *dynstr = &elf->sections[strtab_idx];
+    // check symtab first (higher priority)
+    for (size_t i = 1; i < elf->symtab_count; i++) {
+        const ElfSymbolInfo *s = &elf->symtab[i];
+        
+        if (s->value == 0 || !s->name || !s->name[0])
+            continue;
+        if (s->type != STT_FUNC && s->type != STT_OBJECT)
+            continue;
+        if (s->value > addr)
+            continue;
 
-    FILE *fp = fopen(path, "rb");
-    if (!fp)
-        return -1;
-
-    char *strtab = malloc(dynstr->sh_size);
-    if (!strtab) {
-        fclose(fp);
-        return -1;
-    }
-    fseek(fp, dynstr->sh_offset, SEEK_SET);
-    if (fread(strtab, 1, dynstr->sh_size, fp) != dynstr->sh_size) {
-        free(strtab);
-        fclose(fp);
-        return -1;
-    }
-
-    size_t sym_count = dynsym->sh_size / sizeof(Elf64_Sym);
-    Elf64_Sym *syms = malloc(dynsym->sh_size);
-    if (!syms) {
-        free(strtab);
-        fclose(fp);
-        return -1;
-    }
-    fseek(fp, dynsym->sh_offset, SEEK_SET);
-    if (fread(syms, sizeof(Elf64_Sym), sym_count, fp) != sym_count) {
-        free(syms);
-        free(strtab);
-        fclose(fp);
-        return -1;
-    }
-
-    fclose(fp);
-
-    printf("\n%s[DYNSYM]%s\n", COL(CLR_CYN), COL(CLR_RST));
-
-    for (size_t i = 1; i < sym_count; i++) {
-        Elf64_Sym *s = &syms[i];
-        unsigned char type = ELF64_ST_TYPE(s->st_info);
-
-        const char *type_str;
-        switch (type) {
-        case STT_FUNC:   type_str = "FUNC";   break;
-        case STT_OBJECT: type_str = "OBJECT"; break;
-        case STT_NOTYPE: type_str = "NOTYPE"; break;
-        default:         type_str = "OTHER";  break;
+        // exact match or within bounds
+        if (s->size > 0 && addr < s->value + s->size) {
+            return s;
         }
 
-        const char *name = "<noname>";
-        if (s->st_name < dynstr->sh_size)
-            name = strtab + s->st_name;
-
-        if (type == STT_FUNC || type == STT_OBJECT) {
-            printf("  %016lx  %-6s  %4lu  %s\n",
-                   (unsigned long)s->st_value,
-                   type_str,
-                   (unsigned long)s->st_size,
-                   name);
+        uint64_t dist = addr - s->value;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = s;
         }
     }
 
-    free(syms);
-    free(strtab);
-    return 0;
+    // then check dynsym
+    for (size_t i = 1; i < elf->dynsym_count; i++) {
+        const ElfSymbolInfo *s = &elf->dynsyms[i];
+        
+        if (s->value == 0 || !s->name || !s->name[0])
+            continue;
+        if (s->type != STT_FUNC && s->type != STT_OBJECT)
+            continue;
+        if (s->value > addr)
+            continue;
+
+        // exact match or within bounds
+        if (s->size > 0 && addr < s->value + s->size) {
+            // only use dynsym if we don't have a symtab match
+            if (!best || best->source != SYM_SRC_SYMTAB)
+                return s;
+        }
+
+        uint64_t dist = addr - s->value;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = s;
+        }
+    }
+
+    return best;
 }
 
 void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
@@ -423,6 +547,22 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
     } else {
         printf("  Section  : (no matching section)\n");
     }
+
+    // find symbol
+    const ElfSymbolInfo *sym = find_symbol_for_addr(elf, addr);
+    if (sym) {
+        uint64_t offset = addr - sym->value;
+        const char *src = (sym->source == SYM_SRC_SYMTAB) ? "SYMTAB" : "DYNSYM";
+        
+        if (offset == 0) {
+            printf("  Symbol   : %s (%s, %s)\n", sym->name, sym_type_str(sym->type), src);
+        } else {
+            printf("  Symbol   : %s+0x%lx (%s, %s)\n", 
+                   sym->name, (unsigned long)offset, sym_type_str(sym->type), src);
+        }
+    } else {
+        printf("  Symbol   : (no matching symbol)\n");
+    }
 }
 
 void elf_free(ElfFile *elf)
@@ -430,4 +570,8 @@ void elf_free(ElfFile *elf)
     free(elf->phdrs);
     free(elf->sections);
     free(elf->shstrtab);
+    free(elf->dynsyms);
+    free(elf->dynstr);
+    free(elf->symtab);
+    free(elf->strtab);
 }

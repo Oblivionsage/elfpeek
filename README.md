@@ -35,10 +35,12 @@ The goal is to have a small, focused tool that answers a few common questions qu
 - *"Where is the entry point, and which section owns it?"*
 - *"Which function does this address belong to?"*
 
-The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together
+The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tool can be picky.
 
 ## Features
 
+- ELF32 and ELF64 support
+- Little-endian and big-endian architectures (x86, ARM, PowerPC, MIPS, SPARC)
 - ELF header parsing (type, machine, entry point)
 - Program headers (segments + permissions)
 - Section headers (with simple flag-based coloring)
@@ -49,6 +51,7 @@ The code is intentionally small and straightforward C, so it also works as a "re
     - which section it's in
     - corresponding file offset
     - nearest symbol (`symbol+offset` format)
+- Graceful handling of section-less ELF binaries
 
 ## Screenshot
 

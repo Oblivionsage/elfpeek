@@ -29,29 +29,30 @@ This is not trying to replace `readelf` or `objdump`.
 
 The goal is to have a small, focused tool that answers a few common questions quickly:
 
-- *“What does the layout of this ELF actually look like?”*
-- *“Which segment/section does this virtual address belong to?”*
-- *“Where is this address in the file (offset) so I can poke it with a hex editor?”*
-- *“Where is the entry point, and which section owns it?”*
+- *"What does the layout of this ELF actually look like?"*
+- *"Which segment/section does this virtual address belong to?"*
+- *"Where is this address in the file (offset) so I can poke it with a hex editor?"*
+- *"Where is the entry point, and which section owns it?"*
+- *"Which function does this address belong to?"*
 
-The code is intentionally small and straightforward C, so it also works as a “readable ELF64 example” if you’re learning how ELF headers, sections and symbols are wired together
+The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together
 
 ## Features
 
 - ELF header parsing (type, machine, entry point)
 - Program headers (segments + permissions)
 - Section headers (with simple flag-based coloring)
-- Dynamic symbol table `(.dynsym)` dump (FUNC / OBJECT)
+- Symbol tables (`.dynsym` and `.symtab`) dump
 - Address resolver:
   - Given a VA, show:
     - which segment it's in
     - which section it's in
     - corresponding file offset
+    - nearest symbol (`symbol+offset` format)
 
 ## Screenshot
 
 <img width="1104" height="708" alt="elfpeek2" src="https://github.com/user-attachments/assets/dcef19ac-5101-4c40-afd0-2639483d2b7c" />
-
 
 ## Example
 
@@ -80,18 +81,24 @@ $ ./elfpeek /bin/ls
   0000000000000000  FUNC       0  printf
   0000000000000000  FUNC       0  malloc
   ...
+
+[SYMTAB]
+  0000000000001200  FUNC     311  main
+  00000000000017c0  FUNC    1312  elf_parse_file
+  ...
 ```
 
-Address resolution:
+Address resolution with symbol lookup:
 
 ```bash
-$ ./elfpeek /bin/ls 0x4740
+$ ./elfpeek ./elfpeek 0x1250
 
 [ADDR]
-  Address  : 0x0000000000004740
-  Segment  : [ 3] LOAD          R X  VADDR=0x0000000000004000
-  File off : 0x00004740
-  Section  : [14] .text
+  Address  : 0x0000000000001250
+  Segment  : [ 3] LOAD          R X  VADDR=0x0000000000001000
+  File off : 0x00001250
+  Section  : [16] .text
+  Symbol   : main+0x50 (FUNC, SYMTAB)
 ```
 
 ## Colors
@@ -107,5 +114,5 @@ The idea is to keep output readable in a normal terminal without turning it into
 ## TODO
 
 - [ ] 32-bit ELF support
-- [ ] `.symtab` parsing
 - [ ] Big-endian support
+- [ ] Hex dump of sections

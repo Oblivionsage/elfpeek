@@ -8,7 +8,7 @@ See [open issues](https://github.com/Oblivionsage/elfpeek/issues) for planned fe
 
 - Testing on different ELF binaries (stripped, static, PIE, etc.)
 - Bug fixes and edge case handling
-- Features from the TODO list (32-bit support, `.symtab`, big-endian)
+- Features from the TODO list
 
 ## Code style
 

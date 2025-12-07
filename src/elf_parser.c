@@ -1,25 +1,3 @@
-// MIT License
-
-// Copyright (c) 2025 Oblivionsage
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-//SOFTWARE.
-
 // src/elf_parser.c
 #include "elf_parser.h"
 #include "colors.h"
@@ -28,6 +6,25 @@
 #include <string.h>
 
 int use_colors = 1;
+
+// byte swap helpers
+static inline uint16_t bswap16(uint16_t x) {
+    return (x >> 8) | (x << 8);
+}
+
+static inline uint32_t bswap32(uint32_t x) {
+    return ((x >> 24) & 0xff) | ((x >> 8) & 0xff00) |
+           ((x << 8) & 0xff0000) | ((x << 24) & 0xff000000);
+}
+
+static inline uint64_t bswap64(uint64_t x) {
+    return ((uint64_t)bswap32(x & 0xffffffff) << 32) | bswap32(x >> 32);
+}
+
+// conditional swap macros
+#define SWAP16(elf, x) ((elf)->swap ? bswap16(x) : (x))
+#define SWAP32(elf, x) ((elf)->swap ? bswap32(x) : (x))
+#define SWAP64(elf, x) ((elf)->swap ? bswap64(x) : (x))
 
 static const char *elf_type_str(uint16_t type)
 {
@@ -49,6 +46,10 @@ static const char *elf_machine_str(uint16_t machine)
     case EM_ARM:     return "ARM";
     case EM_AARCH64: return "AArch64";
     case EM_RISCV:   return "RISC-V";
+    case EM_MIPS:    return "MIPS";
+    case EM_PPC:     return "PowerPC";
+    case EM_PPC64:   return "PowerPC64";
+    case EM_SPARC:   return "SPARC";
     default:         return "Unknown";
     }
 }
@@ -122,12 +123,165 @@ static void format_phdr_flags(uint32_t flags, char *buf)
     buf[3] = '\0';
 }
 
+// read and convert ELF32 header to our 64-bit struct
+static int read_ehdr32(FILE *fp, ElfFile *elf)
+{
+    Elf32_Ehdr e32;
+    rewind(fp);
+    if (fread(&e32, sizeof(e32), 1, fp) != 1)
+        return -1;
+
+    // copy ident (same for both)
+    memcpy(elf->ehdr.e_ident, e32.e_ident, EI_NIDENT);
+    
+    // convert fields
+    elf->ehdr.e_type      = SWAP16(elf, e32.e_type);
+    elf->ehdr.e_machine   = SWAP16(elf, e32.e_machine);
+    elf->ehdr.e_version   = SWAP32(elf, e32.e_version);
+    elf->ehdr.e_entry     = SWAP32(elf, e32.e_entry);
+    elf->ehdr.e_phoff     = SWAP32(elf, e32.e_phoff);
+    elf->ehdr.e_shoff     = SWAP32(elf, e32.e_shoff);
+    elf->ehdr.e_flags     = SWAP32(elf, e32.e_flags);
+    elf->ehdr.e_ehsize    = SWAP16(elf, e32.e_ehsize);
+    elf->ehdr.e_phentsize = SWAP16(elf, e32.e_phentsize);
+    elf->ehdr.e_phnum     = SWAP16(elf, e32.e_phnum);
+    elf->ehdr.e_shentsize = SWAP16(elf, e32.e_shentsize);
+    elf->ehdr.e_shnum     = SWAP16(elf, e32.e_shnum);
+    elf->ehdr.e_shstrndx  = SWAP16(elf, e32.e_shstrndx);
+    
+    return 0;
+}
+
+// read and swap ELF64 header
+static int read_ehdr64(FILE *fp, ElfFile *elf)
+{
+    rewind(fp);
+    if (fread(&elf->ehdr, sizeof(elf->ehdr), 1, fp) != 1)
+        return -1;
+
+    if (elf->swap) {
+        elf->ehdr.e_type      = bswap16(elf->ehdr.e_type);
+        elf->ehdr.e_machine   = bswap16(elf->ehdr.e_machine);
+        elf->ehdr.e_version   = bswap32(elf->ehdr.e_version);
+        elf->ehdr.e_entry     = bswap64(elf->ehdr.e_entry);
+        elf->ehdr.e_phoff     = bswap64(elf->ehdr.e_phoff);
+        elf->ehdr.e_shoff     = bswap64(elf->ehdr.e_shoff);
+        elf->ehdr.e_flags     = bswap32(elf->ehdr.e_flags);
+        elf->ehdr.e_ehsize    = bswap16(elf->ehdr.e_ehsize);
+        elf->ehdr.e_phentsize = bswap16(elf->ehdr.e_phentsize);
+        elf->ehdr.e_phnum     = bswap16(elf->ehdr.e_phnum);
+        elf->ehdr.e_shentsize = bswap16(elf->ehdr.e_shentsize);
+        elf->ehdr.e_shnum     = bswap16(elf->ehdr.e_shnum);
+        elf->ehdr.e_shstrndx  = bswap16(elf->ehdr.e_shstrndx);
+    }
+    return 0;
+}
+
+// read program headers (32 or 64 bit)
+static int read_phdrs(FILE *fp, ElfFile *elf)
+{
+    elf->phnum = elf->ehdr.e_phnum;
+    if (elf->phnum == 0)
+        return 0;
+
+    elf->phdrs = malloc(elf->phnum * sizeof(Elf64_Phdr));
+    if (!elf->phdrs)
+        return -1;
+
+    fseek(fp, elf->ehdr.e_phoff, SEEK_SET);
+
+    if (elf->is32) {
+        for (uint16_t i = 0; i < elf->phnum; i++) {
+            Elf32_Phdr p32;
+            if (fread(&p32, sizeof(p32), 1, fp) != 1)
+                return -1;
+            elf->phdrs[i].p_type   = SWAP32(elf, p32.p_type);
+            elf->phdrs[i].p_flags  = SWAP32(elf, p32.p_flags);
+            elf->phdrs[i].p_offset = SWAP32(elf, p32.p_offset);
+            elf->phdrs[i].p_vaddr  = SWAP32(elf, p32.p_vaddr);
+            elf->phdrs[i].p_paddr  = SWAP32(elf, p32.p_paddr);
+            elf->phdrs[i].p_filesz = SWAP32(elf, p32.p_filesz);
+            elf->phdrs[i].p_memsz  = SWAP32(elf, p32.p_memsz);
+            elf->phdrs[i].p_align  = SWAP32(elf, p32.p_align);
+        }
+    } else {
+        if (fread(elf->phdrs, sizeof(Elf64_Phdr), elf->phnum, fp) != elf->phnum)
+            return -1;
+        if (elf->swap) {
+            for (uint16_t i = 0; i < elf->phnum; i++) {
+                Elf64_Phdr *p = &elf->phdrs[i];
+                p->p_type   = bswap32(p->p_type);
+                p->p_flags  = bswap32(p->p_flags);
+                p->p_offset = bswap64(p->p_offset);
+                p->p_vaddr  = bswap64(p->p_vaddr);
+                p->p_paddr  = bswap64(p->p_paddr);
+                p->p_filesz = bswap64(p->p_filesz);
+                p->p_memsz  = bswap64(p->p_memsz);
+                p->p_align  = bswap64(p->p_align);
+            }
+        }
+    }
+    return 0;
+}
+
+// read section headers
+static int read_shdrs(FILE *fp, ElfFile *elf)
+{
+    elf->shnum = elf->ehdr.e_shnum;
+    if (elf->shnum == 0)
+        return 0;
+
+    elf->sections = malloc(elf->shnum * sizeof(Elf64_Shdr));
+    if (!elf->sections)
+        return -1;
+
+    fseek(fp, elf->ehdr.e_shoff, SEEK_SET);
+
+    if (elf->is32) {
+        for (uint16_t i = 0; i < elf->shnum; i++) {
+            Elf32_Shdr s32;
+            if (fread(&s32, sizeof(s32), 1, fp) != 1)
+                return -1;
+            elf->sections[i].sh_name      = SWAP32(elf, s32.sh_name);
+            elf->sections[i].sh_type      = SWAP32(elf, s32.sh_type);
+            elf->sections[i].sh_flags     = SWAP32(elf, s32.sh_flags);
+            elf->sections[i].sh_addr      = SWAP32(elf, s32.sh_addr);
+            elf->sections[i].sh_offset    = SWAP32(elf, s32.sh_offset);
+            elf->sections[i].sh_size      = SWAP32(elf, s32.sh_size);
+            elf->sections[i].sh_link      = SWAP32(elf, s32.sh_link);
+            elf->sections[i].sh_info      = SWAP32(elf, s32.sh_info);
+            elf->sections[i].sh_addralign = SWAP32(elf, s32.sh_addralign);
+            elf->sections[i].sh_entsize   = SWAP32(elf, s32.sh_entsize);
+        }
+    } else {
+        if (fread(elf->sections, sizeof(Elf64_Shdr), elf->shnum, fp) != elf->shnum)
+            return -1;
+        if (elf->swap) {
+            for (uint16_t i = 0; i < elf->shnum; i++) {
+                Elf64_Shdr *s = &elf->sections[i];
+                s->sh_name      = bswap32(s->sh_name);
+                s->sh_type      = bswap32(s->sh_type);
+                s->sh_flags     = bswap64(s->sh_flags);
+                s->sh_addr      = bswap64(s->sh_addr);
+                s->sh_offset    = bswap64(s->sh_offset);
+                s->sh_size      = bswap64(s->sh_size);
+                s->sh_link      = bswap32(s->sh_link);
+                s->sh_info      = bswap32(s->sh_info);
+                s->sh_addralign = bswap64(s->sh_addralign);
+                s->sh_entsize   = bswap64(s->sh_entsize);
+            }
+        }
+    }
+    return 0;
+}
+
 // load symbols from a symbol table section
-static int load_symbols(FILE *fp, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec,
+static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec,
                         ElfSymbolInfo **out_syms, size_t *out_count, 
                         char **out_strtab, SymbolSource source)
 {
-    size_t sym_count = symtab_sec->sh_size / sizeof(Elf64_Sym);
+    size_t entry_size = elf->is32 ? sizeof(Elf32_Sym) : sizeof(Elf64_Sym);
+    size_t sym_count = symtab_sec->sh_size / entry_size;
     if (sym_count == 0)
         return 0;
 
@@ -142,44 +296,59 @@ static int load_symbols(FILE *fp, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec
         return -1;
     }
 
-    // read symbol entries
-    Elf64_Sym *raw_syms = malloc(symtab_sec->sh_size);
-    if (!raw_syms) {
-        free(strtab);
-        return -1;
-    }
-    
-    fseek(fp, symtab_sec->sh_offset, SEEK_SET);
-    if (fread(raw_syms, sizeof(Elf64_Sym), sym_count, fp) != sym_count) {
-        free(raw_syms);
-        free(strtab);
-        return -1;
-    }
-
-    // convert to our format
     ElfSymbolInfo *syms = malloc(sym_count * sizeof(ElfSymbolInfo));
     if (!syms) {
-        free(raw_syms);
         free(strtab);
         return -1;
     }
 
+    fseek(fp, symtab_sec->sh_offset, SEEK_SET);
+
     for (size_t i = 0; i < sym_count; i++) {
-        Elf64_Sym *s = &raw_syms[i];
-        syms[i].value = s->st_value;
-        syms[i].size = s->st_size;
-        syms[i].type = ELF64_ST_TYPE(s->st_info);
-        syms[i].bind = ELF64_ST_BIND(s->st_info);
-        syms[i].shndx = s->st_shndx;
+        uint32_t st_name;
+        uint64_t st_value, st_size;
+        unsigned char st_info;
+        uint16_t st_shndx;
+
+        if (elf->is32) {
+            Elf32_Sym s32;
+            if (fread(&s32, sizeof(s32), 1, fp) != 1) {
+                free(syms);
+                free(strtab);
+                return -1;
+            }
+            st_name  = SWAP32(elf, s32.st_name);
+            st_value = SWAP32(elf, s32.st_value);
+            st_size  = SWAP32(elf, s32.st_size);
+            st_info  = s32.st_info;
+            st_shndx = SWAP16(elf, s32.st_shndx);
+        } else {
+            Elf64_Sym s64;
+            if (fread(&s64, sizeof(s64), 1, fp) != 1) {
+                free(syms);
+                free(strtab);
+                return -1;
+            }
+            st_name  = SWAP32(elf, s64.st_name);
+            st_value = SWAP64(elf, s64.st_value);
+            st_size  = SWAP64(elf, s64.st_size);
+            st_info  = s64.st_info;
+            st_shndx = SWAP16(elf, s64.st_shndx);
+        }
+
+        syms[i].value  = st_value;
+        syms[i].size   = st_size;
+        syms[i].type   = ELF64_ST_TYPE(st_info);
+        syms[i].bind   = ELF64_ST_BIND(st_info);
+        syms[i].shndx  = st_shndx;
         syms[i].source = source;
         
-        if (s->st_name < strtab_sec->sh_size)
-            syms[i].name = strtab + s->st_name;
+        if (st_name < strtab_sec->sh_size)
+            syms[i].name = strtab + st_name;
         else
             syms[i].name = "";
     }
 
-    free(raw_syms);
     *out_syms = syms;
     *out_count = sym_count;
     *out_strtab = strtab;
@@ -198,75 +367,61 @@ int elf_parse_file(const char *path, ElfFile *out)
     memset(out, 0, sizeof(*out));
     out->entry_sec = -1;
 
-    if (fread(&out->ehdr, sizeof(out->ehdr), 1, fp) != 1) {
-        fprintf(stderr, "%serror:%s failed to read elf header\n",
+    // read ident first to determine class and endianness
+    unsigned char ident[EI_NIDENT];
+    if (fread(ident, 1, EI_NIDENT, fp) != EI_NIDENT) {
+        fprintf(stderr, "%serror:%s failed to read elf ident\n",
                 COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
-    if (memcmp(out->ehdr.e_ident, ELFMAG, SELFMAG) != 0) {
+    if (memcmp(ident, ELFMAG, SELFMAG) != 0) {
         fprintf(stderr, "%serror:%s not an ELF file\n",
                 COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
-    if (out->ehdr.e_ident[EI_CLASS] != ELFCLASS64) {
-        fprintf(stderr, "%serror:%s only ELF64 supported\n",
-                COL(CLR_RED), COL(CLR_RST));
-        fclose(fp);
-        return -1;
-    }
+    out->is32 = (ident[EI_CLASS] == ELFCLASS32);
+    out->swap = (ident[EI_DATA] == ELFDATA2MSB);  // we're on little-endian
 
-    if (out->ehdr.e_ident[EI_DATA] != ELFDATA2LSB) {
-        fprintf(stderr, "%swarn:%s big-endian, results may be wrong\n",
-                COL(CLR_YEL), COL(CLR_RST));
+    // read full header
+    if (out->is32) {
+        if (read_ehdr32(fp, out) < 0) {
+            fprintf(stderr, "%serror:%s failed to read elf32 header\n",
+                    COL(CLR_RED), COL(CLR_RST));
+            fclose(fp);
+            return -1;
+        }
+    } else {
+        if (read_ehdr64(fp, out) < 0) {
+            fprintf(stderr, "%serror:%s failed to read elf64 header\n",
+                    COL(CLR_RED), COL(CLR_RST));
+            fclose(fp);
+            return -1;
+        }
     }
 
     // program headers
-    out->phnum = out->ehdr.e_phnum;
-    if (out->phnum > 0) {
-        out->phdrs = malloc(out->phnum * sizeof(Elf64_Phdr));
-        if (!out->phdrs) {
-            fprintf(stderr, "%serror:%s malloc failed\n",
-                    COL(CLR_RED), COL(CLR_RST));
-            fclose(fp);
-            return -1;
-        }
-        fseek(fp, out->ehdr.e_phoff, SEEK_SET);
-        if (fread(out->phdrs, sizeof(Elf64_Phdr), out->phnum, fp) != out->phnum) {
-            fprintf(stderr, "%serror:%s truncated program headers\n",
-                    COL(CLR_RED), COL(CLR_RST));
-            free(out->phdrs);
-            fclose(fp);
-            return -1;
-        }
+    if (read_phdrs(fp, out) < 0) {
+        fprintf(stderr, "%serror:%s truncated program headers\n",
+                COL(CLR_RED), COL(CLR_RST));
+        fclose(fp);
+        return -1;
     }
 
     // section headers
-    out->shnum = out->ehdr.e_shnum;
+    if (read_shdrs(fp, out) < 0) {
+        fprintf(stderr, "%serror:%s truncated section headers\n",
+                COL(CLR_RED), COL(CLR_RST));
+        fclose(fp);
+        return -1;
+    }
+
     if (out->shnum == 0) {
         fclose(fp);
         return 0;
-    }
-
-    size_t sh_size = out->shnum * sizeof(Elf64_Shdr);
-    out->sections = malloc(sh_size);
-    if (!out->sections) {
-        fprintf(stderr, "%serror:%s malloc failed\n",
-                COL(CLR_RED), COL(CLR_RST));
-        fclose(fp);
-        return -1;
-    }
-
-    fseek(fp, out->ehdr.e_shoff, SEEK_SET);
-    if (fread(out->sections, sizeof(Elf64_Shdr), out->shnum, fp) != out->shnum) {
-        fprintf(stderr, "%serror:%s truncated section headers\n",
-                COL(CLR_RED), COL(CLR_RST));
-        free(out->sections);
-        fclose(fp);
-        return -1;
     }
 
     // shstrtab
@@ -298,7 +453,7 @@ int elf_parse_file(const char *path, ElfFile *out)
         if (out->sections[i].sh_type == SHT_DYNSYM) {
             uint32_t link = out->sections[i].sh_link;
             if (link < out->shnum) {
-                load_symbols(fp, &out->sections[i], &out->sections[link],
+                load_symbols(fp, out, &out->sections[i], &out->sections[link],
                             &out->dynsyms, &out->dynsym_count, &out->dynstr,
                             SYM_SRC_DYNSYM);
             }
@@ -311,7 +466,7 @@ int elf_parse_file(const char *path, ElfFile *out)
         if (out->sections[i].sh_type == SHT_SYMTAB) {
             uint32_t link = out->sections[i].sh_link;
             if (link < out->shnum) {
-                load_symbols(fp, &out->sections[i], &out->sections[link],
+                load_symbols(fp, out, &out->sections[i], &out->sections[link],
                             &out->symtab, &out->symtab_count, &out->strtab,
                             SYM_SRC_SYMTAB);
             }
@@ -326,16 +481,25 @@ int elf_parse_file(const char *path, ElfFile *out)
 void elf_print_header(const ElfFile *elf)
 {
     const Elf64_Ehdr *e = &elf->ehdr;
+    const char *class_str = elf->is32 ? "ELF32" : "ELF64";
+    const char *endian_str = elf->swap ? "big-endian" : "little-endian";
 
     printf("\n%s[ELF HEADER]%s\n", COL(CLR_CYN), COL(CLR_RST));
+    printf("  Class       : %s (%s)\n", class_str, endian_str);
     printf("  Type        : %s\n", elf_type_str(e->e_type));
     printf("  Machine     : %s\n", elf_machine_str(e->e_machine));
 
     if (elf->entry_sec >= 0 && elf->shstrtab) {
         const char *name = elf->shstrtab + elf->sections[elf->entry_sec].sh_name;
-        printf("  Entry       : 0x%016lx  (in %s)\n", (unsigned long)e->e_entry, name);
+        if (elf->is32)
+            printf("  Entry       : 0x%08lx  (in %s)\n", (unsigned long)e->e_entry, name);
+        else
+            printf("  Entry       : 0x%016lx  (in %s)\n", (unsigned long)e->e_entry, name);
     } else {
-        printf("  Entry       : 0x%016lx\n", (unsigned long)e->e_entry);
+        if (elf->is32)
+            printf("  Entry       : 0x%08lx\n", (unsigned long)e->e_entry);
+        else
+            printf("  Entry       : 0x%016lx\n", (unsigned long)e->e_entry);
     }
 
     printf("  PHDR offset : 0x%08lx (%u entries)\n",
@@ -352,13 +516,16 @@ void elf_print_phdrs(const ElfFile *elf)
 
     printf("\n%s[PROGRAM HEADERS]%s\n", COL(CLR_CYN), COL(CLR_RST));
 
+    const char *vfmt = elf->is32 
+        ? "  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%08lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n"
+        : "  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%016lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n";
+
     for (uint16_t i = 0; i < elf->phnum; i++) {
         const Elf64_Phdr *p = &elf->phdrs[i];
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
 
-        printf("  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%016lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n",
-               i, ph_type_str(p->p_type), flags,
+        printf(vfmt, i, ph_type_str(p->p_type), flags,
                (unsigned long)p->p_offset,
                (unsigned long)p->p_vaddr,
                (unsigned long)p->p_filesz,
@@ -374,6 +541,8 @@ void elf_print_sections(const ElfFile *elf)
     }
 
     printf("\n%s[SECTIONS]%s\n", COL(CLR_CYN), COL(CLR_RST));
+
+    const char *addr_fmt = elf->is32 ? "0x%08lx" : "0x%08lx";
 
     for (uint16_t i = 0; i < elf->shnum; i++) {
         const Elf64_Shdr *s = &elf->sections[i];
@@ -397,8 +566,10 @@ void elf_print_sections(const ElfFile *elf)
 
         if (flags[0])
             printf("  FLAGS=%-3s", flags);
-        if (s->sh_addr)
-            printf("  ADDR=0x%08lx", (unsigned long)s->sh_addr);
+        if (s->sh_addr) {
+            printf("  ADDR=");
+            printf(addr_fmt, (unsigned long)s->sh_addr);
+        }
         if (s->sh_offset)
             printf("  OFF=0x%06lx", (unsigned long)s->sh_offset);
         if (s->sh_size)
@@ -411,18 +582,21 @@ void elf_print_sections(const ElfFile *elf)
     }
 }
 
-static void print_symbol_table(const ElfSymbolInfo *syms, size_t count, const char *title)
+static void print_symbol_table(const ElfFile *elf, const ElfSymbolInfo *syms, size_t count, const char *title)
 {
     printf("\n%s[%s]%s\n", COL(CLR_CYN), title, COL(CLR_RST));
+
+    const char *fmt = elf->is32
+        ? "  %08lx  %-6s  %4lu  %s\n"
+        : "  %016lx  %-6s  %4lu  %s\n";
 
     for (size_t i = 1; i < count; i++) {
         const ElfSymbolInfo *s = &syms[i];
         
-        // skip useless entries
         if (s->type != STT_FUNC && s->type != STT_OBJECT)
             continue;
 
-        printf("  %016lx  %-6s  %4lu  %s\n",
+        printf(fmt,
                (unsigned long)s->value,
                sym_type_str(s->type),
                (unsigned long)s->size,
@@ -436,17 +610,16 @@ void elf_print_dynsym(const ElfFile *elf)
         fprintf(stderr, "  %swarn:%s no .dynsym section\n", COL(CLR_YEL), COL(CLR_RST));
         return;
     }
-    print_symbol_table(elf->dynsyms, elf->dynsym_count, "DYNSYM");
+    print_symbol_table(elf, elf->dynsyms, elf->dynsym_count, "DYNSYM");
 }
 
 void elf_print_symtab(const ElfFile *elf)
 {
     if (!elf->symtab || elf->symtab_count == 0)
         return;
-    print_symbol_table(elf->symtab, elf->symtab_count, "SYMTAB");
+    print_symbol_table(elf, elf->symtab, elf->symtab_count, "SYMTAB");
 }
 
-// find best matching symbol for addr
 static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t addr)
 {
     const ElfSymbolInfo *best = NULL;
@@ -463,10 +636,8 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
         if (s->value > addr)
             continue;
 
-        // exact match or within bounds
-        if (s->size > 0 && addr < s->value + s->size) {
+        if (s->size > 0 && addr < s->value + s->size)
             return s;
-        }
 
         uint64_t dist = addr - s->value;
         if (dist < best_dist) {
@@ -486,9 +657,7 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
         if (s->value > addr)
             continue;
 
-        // exact match or within bounds
         if (s->size > 0 && addr < s->value + s->size) {
-            // only use dynsym if we don't have a symtab match
             if (!best || best->source != SYM_SRC_SYMTAB)
                 return s;
         }
@@ -505,8 +674,12 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
 
 void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
 {
+    const char *addr_fmt = elf->is32 ? "0x%08lx" : "0x%016lx";
+
     printf("\n%s[ADDR]%s\n", COL(CLR_CYN), COL(CLR_RST));
-    printf("  Address  : 0x%016lx\n", (unsigned long)addr);
+    printf("  Address  : ");
+    printf(addr_fmt, (unsigned long)addr);
+    printf("\n");
 
     // find segment
     int seg_idx = -1;
@@ -522,8 +695,10 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         const Elf64_Phdr *p = &elf->phdrs[seg_idx];
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
-        printf("  Segment  : [%2d] %-12s  %s  VADDR=0x%016lx\n",
-               seg_idx, ph_type_str(p->p_type), flags, (unsigned long)p->p_vaddr);
+        
+        printf("  Segment  : [%2d] %-12s  %s  VADDR=", seg_idx, ph_type_str(p->p_type), flags);
+        printf(addr_fmt, (unsigned long)p->p_vaddr);
+        printf("\n");
 
         uint64_t file_off = p->p_offset + (addr - p->p_vaddr);
         printf("  File off : 0x%08lx\n", (unsigned long)file_off);
@@ -554,12 +729,10 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         uint64_t offset = addr - sym->value;
         const char *src = (sym->source == SYM_SRC_SYMTAB) ? "SYMTAB" : "DYNSYM";
         
-        if (offset == 0) {
+        if (offset == 0)
             printf("  Symbol   : %s (%s, %s)\n", sym->name, sym_type_str(sym->type), src);
-        } else {
-            printf("  Symbol   : %s+0x%lx (%s, %s)\n", 
-                   sym->name, (unsigned long)offset, sym_type_str(sym->type), src);
-        }
+        else
+            printf("  Symbol   : %s+0x%lx (%s, %s)\n", sym->name, (unsigned long)offset, sym_type_str(sym->type), src);
     } else {
         printf("  Symbol   : (no matching symbol)\n");
     }

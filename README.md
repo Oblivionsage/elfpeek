@@ -2,6 +2,8 @@
 
 Minimal ELF64 inspector written in C for quick binary layout inspection
 
+![demo](assets/demo.gif)
+
 ## Build
 
 ```bash

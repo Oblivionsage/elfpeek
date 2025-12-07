@@ -53,10 +53,8 @@ The code is intentionally small and straightforward C, so it also works as a "re
     - nearest symbol (`symbol+offset` format)
 - Graceful handling of section-less ELF binaries
 
-## Screenshot
+![2025-12-07 23-43-37](https://github.com/user-attachments/assets/90e35090-335a-44e3-93fd-36e62954994a)
 
-<img width="896" height="881" alt="image" src="https://github.com/user-attachments/assets/90574a2b-431e-46fd-877f-b3f1e8a2f949" />
-<img width="635" height="902" alt="image" src="https://github.com/user-attachments/assets/d25c7eb1-1cd8-41f6-9466-de34f794b939" />
 
 
 

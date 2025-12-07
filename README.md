@@ -35,7 +35,7 @@ The goal is to have a small, focused tool that answers a few common questions qu
 - *"Where is the entry point, and which section owns it?"*
 - *"Which function does this address belong to?"*
 
-The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tool can be picky.
+The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tools can be picky.
 
 ## Features
 

@@ -55,11 +55,6 @@ The code is intentionally small and straightforward C, so it also works as a "re
     - nearest symbol (`symbol+offset` format)
 - Graceful handling of section-less ELF binaries
 
-![2025-12-07 23-43-37](https://github.com/user-attachments/assets/90e35090-335a-44e3-93fd-36e62954994a)
-
-
-
-
 ## Example
 
 ```bash

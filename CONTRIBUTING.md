@@ -2,6 +2,8 @@
 
 If you try `elfpeek` on interesting binaries and spot something odd (weird flags, corner cases, broken output), feel free to open an issue or send a small PR.
 
+See [open issues](https://github.com/Oblivionsage/elfpeek/issues) for planned features
+
 ## Ideas
 
 - Testing on different ELF binaries (stripped, static, PIE, etc.)

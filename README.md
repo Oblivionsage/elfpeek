@@ -1,6 +1,6 @@
 # elfpeek
 
-Minimal ELF64 inspector written in C for quick binary layout inspection
+Minimal ELF inspector written in C for quick binary layout inspection
 
 ![demo](assets/demo.gif)
 
@@ -12,7 +12,7 @@ make
 
 This builds a single `elfpeek` binary `(gcc -std=c11 -Wall -Wextra -O2)`
 
-No external dependencies; only glibc and `<elf.h>`. Currently supports ELF64 little-endian binaries (Linux x86_64 style)
+No external dependencies; only glibc and `<elf.h>`. Supports ELF32/ELF64, little/big-endian.
 
 ## Usage
 
@@ -20,7 +20,7 @@ No external dependencies; only glibc and `<elf.h>`. Currently supports ELF64 lit
 ./elfpeek <elf-file> [addr]
 ```
 
-- `elf-file` – path to an ELF64 binary
+- `elf-file` – path to an ELF binary
 - `addr` (optional) – virtual address to resolve
   - `0x...` → hex
   - otherwise → decimal
@@ -37,7 +37,7 @@ The goal is to have a small, focused tool that answers a few common questions qu
 - *"Where is the entry point, and which section owns it?"*
 - *"Which function does this address belong to?"*
 
-The code is intentionally small and straightforward C, so it also works as a "readable ELF64 example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tools can be picky.
+The code is intentionally small and straightforward C, so it also works as a "readable ELF example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tools can be picky.
 
 ## Features
 
@@ -61,6 +61,7 @@ The code is intentionally small and straightforward C, so it also works as a "re
 $ ./elfpeek /bin/ls
 
 [ELF HEADER]
+  Class       : ELF64 (little-endian)
   Type        : DYN (Shared object)
   Machine     : x86_64
   Entry       : 0x0000000000006760  (in .text)
@@ -90,7 +91,6 @@ $ ./elfpeek /bin/ls
 ```
 
 Address resolution with symbol lookup:
-
 ```bash
 $ ./elfpeek ./elfpeek 0x1250
 
@@ -101,6 +101,21 @@ $ ./elfpeek ./elfpeek 0x1250
   Section  : [16] .text
   Symbol   : main+0x50 (FUNC, SYMTAB)
 ```
+
+## Test Binaries
+
+The `tests/` directory contains various ELF samples for testing:
+
+| File | Description |
+|------|-------------|
+| `elf32_le.bin` | 32-bit little-endian (i386) |
+| `elf32_be.bin` | 32-bit big-endian (PowerPC) |
+| `elf64_be.bin` | 64-bit big-endian (PowerPC64) |
+| `elf64_le_pie.bin` | PIE executable, not stripped |
+| `elf64_le_static.bin` | Statically linked, symtab only |
+| `elf64_le_dynsym_only.bin` | Stripped, dynsym only |
+| `elf64_le_so.bin` | Shared object |
+| `elf64_le_segments_only.bin` | No section headers (firmware-style) |
 
 ## Colors
 

@@ -1,6 +1,7 @@
 # Build artifacts
 *.o
 elfpeek
+.cast
 
 # Editor
 *.swp

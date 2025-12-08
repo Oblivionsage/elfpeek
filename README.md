@@ -14,72 +14,80 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/no%20dependencies-✓-brightgreen?style=flat-square" alt="No Dependencies">
-  <img src="https://img.shields.io/badge/minimal-~600%20LOC-purple?style=flat-square" alt="Minimal">
+  <img src="https://img.shields.io/badge/minimal-~1K%20LOC-purple?style=flat-square" alt="Minimal">
   <img src="https://img.shields.io/badge/reverse%20engineering-tool-red?style=flat-square" alt="RE Tool">
 </p>
 
 <p align="center">
-  Minimal ELF inspector written in C for quick binary layout inspection
+  Minimal ELF inspector with interactive REPL for quick binary analysis
 </p>
+
 ---
 
-![demo](assets/demo.gif)
+## Features
+
+- **Interactive REPL** with readline support (history, tab completion)
+- **Dynamic colored prompt** - shows current file: `(elfpeek:ls)`
+- **Colored hexdump** - null (gray), printable (green), control (red), high bytes (yellow)
+- **Colored sections** - executable (green), writable (yellow), read-only (cyan)
+- **ELF32/ELF64** support with little/big endian
+- **Address resolver** - maps VA to segment, section, file offset, nearest symbol
+- **Symbol tables** - both `.dynsym` and `.symtab`
+- **No dependencies** - only glibc and `<elf.h>`
 
 ## Build
-
 ```bash
 make
 ```
 
-This builds a single `elfpeek` binary `(gcc -std=c11 -Wall -Wextra -O2)`
-
-No external dependencies; only glibc and `<elf.h>`. Supports ELF32/ELF64, little/big-endian.
+Optional: Install `libreadline-dev` for command history in REPL.
 
 ## Usage
 
+### Interactive Mode
 ```bash
-./elfpeek <elf-file> [addr]
+./elfpeek
+```
+```
+elfpeek interactive mode
+type 'help' for commands, 'quit' to exit
+
+(elfpeek) open /bin/ls
+opened /bin/ls (ELF64, little-endian)
+(elfpeek:ls) info
+(elfpeek:ls) sections
+(elfpeek:ls) dump .rodata 64
+(elfpeek:ls) resolve 0x6760
+(elfpeek:ls) quit
 ```
 
-- `elf-file` – path to an ELF binary
-- `addr` (optional) – virtual address to resolve
-  - `0x...` → hex
-  - otherwise → decimal
-
-## Why?
-
-This is not trying to replace `readelf` or `objdump`.
-
-The goal is to have a small, focused tool that answers a few common questions quickly:
-
-- *"What does the layout of this ELF actually look like?"*
-- *"Which segment/section does this virtual address belong to?"*
-- *"Where is this address in the file (offset) so I can poke it with a hex editor?"*
-- *"Where is the entry point, and which section owns it?"*
-- *"Which function does this address belong to?"*
-
-The code is intentionally small and straightforward C, so it also works as a "readable ELF example" if you're learning how ELF headers, sections and symbols are wired together. Also works on stripped or segment-only ELF binaries where some tools can be picky.
-
-## Features
-
-- ELF32 and ELF64 support
-- Little-endian and big-endian architectures (x86, ARM, PowerPC, MIPS, SPARC)
-- ELF header parsing (type, machine, entry point)
-- Program headers (segments + permissions)
-- Section headers (with simple flag-based coloring)
-- Symbol tables (`.dynsym` and `.symtab`) dump
-- Address resolver:
-  - Given a VA, show:
-    - which segment it's in
-    - which section it's in
-    - corresponding file offset
-    - nearest symbol (`symbol+offset` format)
-- Graceful handling of section-less ELF binaries
-
-## Example
-
+### One-shot Mode
 ```bash
-$ ./elfpeek /bin/ls
+./elfpeek /bin/ls           # show headers, sections, symbols
+./elfpeek /bin/ls 0x6760    # resolve address
+```
+
+## Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `open <path>` | `o` | Open ELF file |
+| `close` | | Close current file |
+| `info` | `i` | Show ELF header |
+| `sections` | `s` | List section headers |
+| `phdr` | `p` | List program headers |
+| `entry` | `e` | Show entry point |
+| `symbols [dyn\|sym]` | `sym` | Dump symbol tables |
+| `resolve <addr>` | `r` | Resolve virtual address |
+| `dump <.sec\|@off> [n]` | `d` | Hex dump (section or offset) |
+| `help` | `?` | Show help |
+| `quit` | `q` | Exit |
+
+## Examples
+
+### ELF Header
+```
+(elfpeek:ls) info
 
 [ELF HEADER]
   Class       : ELF64 (little-endian)
@@ -88,66 +96,81 @@ $ ./elfpeek /bin/ls
   Entry       : 0x0000000000006760  (in .text)
   PHDR offset : 0x00000040 (14 entries)
   SHDR offset : 0x00026428 (30 entries)
-  SHSTR index : 29
+```
 
-[PROGRAM HEADERS]
-  [ 0] PHDR          R    OFF=0x000040  VADDR=0x0000000000000040  FILESZ=0x000310  MEMSZ=0x000310
-  [ 3] LOAD          R X  OFF=0x004000  VADDR=0x0000000000004000  FILESZ=0x016cf9  MEMSZ=0x016cf9
-  ...
+### Colored Sections
+```
+(elfpeek:ls) sections
 
 [SECTIONS]
-  [14] .text               TYPE=PROGBITS    FLAGS=AX   ADDR=0x00004740  OFF=0x004740  SIZE=0x165ae  <-- entry
-  [16] .rodata             TYPE=PROGBITS    FLAGS=A    ADDR=0x0001b000  OFF=0x01b000  SIZE=0x5388
-  ...
-
-[DYNSYM]
-  0000000000000000  FUNC       0  printf
-  0000000000000000  FUNC       0  malloc
-  ...
-
-[SYMTAB]
-  0000000000001200  FUNC     311  main
-  00000000000017c0  FUNC    1312  elf_parse_file
-  ...
+  [11] .init     TYPE=PROGBITS  FLAGS=AX   ADDR=0x00004000  <-- green (executable)
+  [14] .text     TYPE=PROGBITS  FLAGS=AX   ADDR=0x00004740  <-- entry
+  [16] .rodata   TYPE=PROGBITS  FLAGS=A    ADDR=0x0001b000  <-- cyan (read-only)
+  [25] .data     TYPE=PROGBITS  FLAGS=WA   ADDR=0x00027000  <-- yellow (writable)
+  [26] .bss      TYPE=NOBITS    FLAGS=WA   ADDR=0x00027280
 ```
 
-Address resolution with symbol lookup:
-```bash
-$ ./elfpeek ./elfpeek 0x1250
+### Colored Hexdump
+```
+(elfpeek:ls) dump .rodata 64
+
+  0001b000  01 00 02 00 cd cc cc 3d  66 66 66 3f cd cc 8c 3f  |.......=fff?...?|
+  0001b010  00 00 80 5f 00 00 00 5f  00 00 20 41 00 00 00 00  |..._..._.. A....|
+```
+
+Color coding:
+- **Gray/dim**: null bytes (`00`)
+- **Green**: printable ASCII (`20`-`7E`)
+- **Red**: control characters (`01`-`1F`)
+- **Yellow**: high bytes (`80`-`FF`)
+- **Cyan**: addresses
+
+### Address Resolution
+```
+(elfpeek:ls) resolve 0x6760
 
 [ADDR]
-  Address  : 0x0000000000001250
-  Segment  : [ 3] LOAD          R X  VADDR=0x0000000000001000
-  File off : 0x00001250
-  Section  : [16] .text
-  Symbol   : main+0x50 (FUNC, SYMTAB)
+  Address  : 0x0000000000006760
+  Segment  : [ 3] LOAD  R X  VADDR=0x0000000000004000
+  File off : 0x00006760
+  Section  : [14] .text
+  Symbol   : error_at_line+0x1c89 (FUNC, DYNSYM)
 ```
+
+### Dump by File Offset
+```
+(elfpeek:ls) dump @0x1000 32
+
+  00001000  7c 05 00 00 11 00 1a 00  a8 72 02 00 00 00 00 00  ||........r......|
+```
+
+## Why?
+
+Not a replacement for `readelf` or `objdump`. Just a quick, focused tool for common RE questions:
+
+- What's the binary layout?
+- Which segment/section contains this address?
+- What's the file offset for this VA?
+- What bytes are at this location?
+- Which function owns this address?
+
+Also serves as readable ELF parsing example in C. Handles stripped and segment-only binaries gracefully.
 
 ## Test Binaries
 
-The `tests/` directory contains various ELF samples for testing:
+`tests/` contains sample ELF files:
 
 | File | Description |
 |------|-------------|
 | `elf32_le.bin` | 32-bit little-endian (i386) |
 | `elf32_be.bin` | 32-bit big-endian (PowerPC) |
 | `elf64_be.bin` | 64-bit big-endian (PowerPC64) |
-| `elf64_le_pie.bin` | PIE executable, not stripped |
-| `elf64_le_static.bin` | Statically linked, symtab only |
+| `elf64_le_pie.bin` | PIE executable |
+| `elf64_le_static.bin` | Statically linked |
 | `elf64_le_dynsym_only.bin` | Stripped, dynsym only |
 | `elf64_le_so.bin` | Shared object |
-| `elf64_le_segments_only.bin` | No section headers (firmware-style) |
+| `elf64_le_segments_only.bin` | No section headers |
 
-## Colors
+## License
 
-Section names are lightly colored by flags:
-
-- **Green** – executable (X)
-- **Yellow** – writable (W)
-- **Cyan** – read-only allocated (A)
-
-The idea is to keep output readable in a normal terminal without turning it into a rainbow.
-
-## TODO
-
-- [ ] Hex dump of sections
+MIT

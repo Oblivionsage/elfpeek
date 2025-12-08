@@ -1,4 +1,3 @@
-cat > README.md << 'EOF'
 <h1 align="center">elfpeek</h1>
 
 <p align="center">

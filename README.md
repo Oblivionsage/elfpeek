@@ -117,7 +117,13 @@ Also serves as readable ELF parsing example in C. Handles stripped and segment-o
 | `elf64_le_so.bin` | Shared object |
 | `elf64_le_segments_only.bin` | No section headers |
 
+## TODO
+
+- [ ] `strings` command - extract printable strings
+- [ ] `relocs` command - show relocations  
+- [ ] `got`/`plt` analysis
+- [ ] Disassembly with capstone
+
 ## License
 
 MIT
-EOF

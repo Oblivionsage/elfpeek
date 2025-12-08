@@ -22,17 +22,16 @@ typedef struct {
 } ElfSymbolInfo;
 
 typedef struct {
-    // we store everything as 64-bit internally, convert from 32-bit if needed
     Elf64_Ehdr ehdr;
     Elf64_Phdr *phdrs;
     Elf64_Shdr *sections;
     char *shstrtab;
+
     uint16_t phnum;
     uint16_t shnum;
     int entry_sec;
-
-    int is32;   // ELF32 file
-    int swap;   // needs byte swapping (big-endian)
+    int is32;
+    int swap;
 
     ElfSymbolInfo *dynsyms;
     size_t dynsym_count;
@@ -41,6 +40,9 @@ typedef struct {
     ElfSymbolInfo *symtab;
     size_t symtab_count;
     char *strtab;
+
+    // for hexdump - we keep file path to re-read
+    char *path;
 } ElfFile;
 
 int elf_parse_file(const char *path, ElfFile *out);
@@ -49,7 +51,12 @@ void elf_print_phdrs(const ElfFile *elf);
 void elf_print_sections(const ElfFile *elf);
 void elf_print_dynsym(const ElfFile *elf);
 void elf_print_symtab(const ElfFile *elf);
+void elf_print_entry(const ElfFile *elf);
 void elf_resolve_addr(const ElfFile *elf, uint64_t addr);
 void elf_free(ElfFile *elf);
+
+// new for repl
+int elf_find_section(const ElfFile *elf, const char *name, uint64_t *off, uint64_t *size);
+void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len);
 
 #endif

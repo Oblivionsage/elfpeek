@@ -1,4 +1,5 @@
 // src/elf_parser.c
+#define _GNU_SOURCE
 #include "elf_parser.h"
 #include "colors.h"
 #include <stdio.h>
@@ -7,7 +8,6 @@
 
 int use_colors = 1;
 
-// byte swap helpers
 static inline uint16_t bswap16(uint16_t x) {
     return (x >> 8) | (x << 8);
 }
@@ -21,7 +21,6 @@ static inline uint64_t bswap64(uint64_t x) {
     return ((uint64_t)bswap32(x & 0xffffffff) << 32) | bswap32(x >> 32);
 }
 
-// conditional swap macros
 #define SWAP16(elf, x) ((elf)->swap ? bswap16(x) : (x))
 #define SWAP32(elf, x) ((elf)->swap ? bswap32(x) : (x))
 #define SWAP64(elf, x) ((elf)->swap ? bswap64(x) : (x))
@@ -123,7 +122,6 @@ static void format_phdr_flags(uint32_t flags, char *buf)
     buf[3] = '\0';
 }
 
-// read and convert ELF32 header to our 64-bit struct
 static int read_ehdr32(FILE *fp, ElfFile *elf)
 {
     Elf32_Ehdr e32;
@@ -131,10 +129,8 @@ static int read_ehdr32(FILE *fp, ElfFile *elf)
     if (fread(&e32, sizeof(e32), 1, fp) != 1)
         return -1;
 
-    // copy ident (same for both)
     memcpy(elf->ehdr.e_ident, e32.e_ident, EI_NIDENT);
     
-    // convert fields
     elf->ehdr.e_type      = SWAP16(elf, e32.e_type);
     elf->ehdr.e_machine   = SWAP16(elf, e32.e_machine);
     elf->ehdr.e_version   = SWAP32(elf, e32.e_version);
@@ -152,7 +148,6 @@ static int read_ehdr32(FILE *fp, ElfFile *elf)
     return 0;
 }
 
-// read and swap ELF64 header
 static int read_ehdr64(FILE *fp, ElfFile *elf)
 {
     rewind(fp);
@@ -177,7 +172,6 @@ static int read_ehdr64(FILE *fp, ElfFile *elf)
     return 0;
 }
 
-// read program headers (32 or 64 bit)
 static int read_phdrs(FILE *fp, ElfFile *elf)
 {
     elf->phnum = elf->ehdr.e_phnum;
@@ -224,7 +218,6 @@ static int read_phdrs(FILE *fp, ElfFile *elf)
     return 0;
 }
 
-// read section headers
 static int read_shdrs(FILE *fp, ElfFile *elf)
 {
     elf->shnum = elf->ehdr.e_shnum;
@@ -275,7 +268,6 @@ static int read_shdrs(FILE *fp, ElfFile *elf)
     return 0;
 }
 
-// load symbols from a symbol table section
 static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec,
                         ElfSymbolInfo **out_syms, size_t *out_count, 
                         char **out_strtab, SymbolSource source)
@@ -285,7 +277,6 @@ static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Sh
     if (sym_count == 0)
         return 0;
 
-    // read string table
     char *strtab = malloc(strtab_sec->sh_size);
     if (!strtab)
         return -1;
@@ -359,72 +350,61 @@ int elf_parse_file(const char *path, ElfFile *out)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) {
-        fprintf(stderr, "%serror:%s cannot open '%s'\n",
-                COL(CLR_RED), COL(CLR_RST), path);
+        fprintf(stderr, "%serror:%s cannot open '%s'\n", COL(CLR_RED), COL(CLR_RST), path);
         return -1;
     }
 
     memset(out, 0, sizeof(*out));
     out->entry_sec = -1;
 
-    // read ident first to determine class and endianness
     unsigned char ident[EI_NIDENT];
     if (fread(ident, 1, EI_NIDENT, fp) != EI_NIDENT) {
-        fprintf(stderr, "%serror:%s failed to read elf ident\n",
-                COL(CLR_RED), COL(CLR_RST));
+        fprintf(stderr, "%serror:%s failed to read elf ident\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
     if (memcmp(ident, ELFMAG, SELFMAG) != 0) {
-        fprintf(stderr, "%serror:%s not an ELF file\n",
-                COL(CLR_RED), COL(CLR_RST));
+        fprintf(stderr, "%serror:%s not an ELF file\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
     out->is32 = (ident[EI_CLASS] == ELFCLASS32);
-    out->swap = (ident[EI_DATA] == ELFDATA2MSB);  // we're on little-endian
+    out->swap = (ident[EI_DATA] == ELFDATA2MSB);
 
-    // read full header
     if (out->is32) {
         if (read_ehdr32(fp, out) < 0) {
-            fprintf(stderr, "%serror:%s failed to read elf32 header\n",
-                    COL(CLR_RED), COL(CLR_RST));
+            fprintf(stderr, "%serror:%s failed to read elf32 header\n", COL(CLR_RED), COL(CLR_RST));
             fclose(fp);
             return -1;
         }
     } else {
         if (read_ehdr64(fp, out) < 0) {
-            fprintf(stderr, "%serror:%s failed to read elf64 header\n",
-                    COL(CLR_RED), COL(CLR_RST));
+            fprintf(stderr, "%serror:%s failed to read elf64 header\n", COL(CLR_RED), COL(CLR_RST));
             fclose(fp);
             return -1;
         }
     }
 
-    // program headers
     if (read_phdrs(fp, out) < 0) {
-        fprintf(stderr, "%serror:%s truncated program headers\n",
-                COL(CLR_RED), COL(CLR_RST));
+        fprintf(stderr, "%serror:%s truncated program headers\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
-    // section headers
     if (read_shdrs(fp, out) < 0) {
-        fprintf(stderr, "%serror:%s truncated section headers\n",
-                COL(CLR_RED), COL(CLR_RST));
+        fprintf(stderr, "%serror:%s truncated section headers\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
     if (out->shnum == 0) {
+        out->path = strdup(path);
         fclose(fp);
         return 0;
     }
 
-    // shstrtab
     uint16_t stridx = out->ehdr.e_shstrndx;
     if (stridx < out->shnum && stridx != SHN_UNDEF) {
         Elf64_Shdr *strsec = &out->sections[stridx];
@@ -438,7 +418,6 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
-    // find entry section
     uint64_t entry = out->ehdr.e_entry;
     for (uint16_t i = 0; i < out->shnum; i++) {
         Elf64_Shdr *s = &out->sections[i];
@@ -448,7 +427,6 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
-    // load .dynsym
     for (uint16_t i = 0; i < out->shnum; i++) {
         if (out->sections[i].sh_type == SHT_DYNSYM) {
             uint32_t link = out->sections[i].sh_link;
@@ -461,7 +439,6 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
-    // load .symtab
     for (uint16_t i = 0; i < out->shnum; i++) {
         if (out->sections[i].sh_type == SHT_SYMTAB) {
             uint32_t link = out->sections[i].sh_link;
@@ -474,6 +451,7 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    out->path = strdup(path);
     fclose(fp);
     return 0;
 }
@@ -492,20 +470,18 @@ void elf_print_header(const ElfFile *elf)
     if (elf->entry_sec >= 0 && elf->shstrtab) {
         const char *name = elf->shstrtab + elf->sections[elf->entry_sec].sh_name;
         if (elf->is32)
-            printf("  Entry       : 0x%08lx  (in %s)\n", (unsigned long)e->e_entry, name);
+            printf("  Entry       : %s0x%08lx%s  (in %s)\n", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST), name);
         else
-            printf("  Entry       : 0x%016lx  (in %s)\n", (unsigned long)e->e_entry, name);
+            printf("  Entry       : %s0x%016lx%s  (in %s)\n", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST), name);
     } else {
         if (elf->is32)
-            printf("  Entry       : 0x%08lx\n", (unsigned long)e->e_entry);
+            printf("  Entry       : %s0x%08lx%s\n", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST));
         else
-            printf("  Entry       : 0x%016lx\n", (unsigned long)e->e_entry);
+            printf("  Entry       : %s0x%016lx%s\n", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST));
     }
 
-    printf("  PHDR offset : 0x%08lx (%u entries)\n",
-           (unsigned long)e->e_phoff, e->e_phnum);
-    printf("  SHDR offset : 0x%08lx (%u entries)\n",
-           (unsigned long)e->e_shoff, e->e_shnum);
+    printf("  PHDR offset : 0x%08lx (%u entries)\n", (unsigned long)e->e_phoff, e->e_phnum);
+    printf("  SHDR offset : 0x%08lx (%u entries)\n", (unsigned long)e->e_shoff, e->e_shnum);
     printf("  SHSTR index : %u\n", e->e_shstrndx);
 }
 
@@ -516,20 +492,28 @@ void elf_print_phdrs(const ElfFile *elf)
 
     printf("\n%s[PROGRAM HEADERS]%s\n", COL(CLR_CYN), COL(CLR_RST));
 
-    const char *vfmt = elf->is32 
-        ? "  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%08lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n"
-        : "  [%2u] %-12s  %s  OFF=0x%06lx  VADDR=0x%016lx  FILESZ=0x%06lx  MEMSZ=0x%06lx\n";
-
     for (uint16_t i = 0; i < elf->phnum; i++) {
         const Elf64_Phdr *p = &elf->phdrs[i];
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
 
-        printf(vfmt, i, ph_type_str(p->p_type), flags,
-               (unsigned long)p->p_offset,
-               (unsigned long)p->p_vaddr,
-               (unsigned long)p->p_filesz,
-               (unsigned long)p->p_memsz);
+        const char *fcol = (p->p_flags & PF_X) ? CLR_GRN : ((p->p_flags & PF_W) ? CLR_YEL : "");
+
+        if (elf->is32) {
+            printf("  [%2u] %-12s  %s%s%s  OFF=0x%06lx  VADDR=%s0x%08lx%s  FILESZ=0x%06lx  MEMSZ=0x%06lx\n",
+                   i, ph_type_str(p->p_type), COL(fcol), flags, COL(CLR_RST),
+                   (unsigned long)p->p_offset,
+                   COL(CLR_CYN), (unsigned long)p->p_vaddr, COL(CLR_RST),
+                   (unsigned long)p->p_filesz,
+                   (unsigned long)p->p_memsz);
+        } else {
+            printf("  [%2u] %-12s  %s%s%s  OFF=0x%06lx  VADDR=%s0x%016lx%s  FILESZ=0x%06lx  MEMSZ=0x%06lx\n",
+                   i, ph_type_str(p->p_type), COL(fcol), flags, COL(CLR_RST),
+                   (unsigned long)p->p_offset,
+                   COL(CLR_CYN), (unsigned long)p->p_vaddr, COL(CLR_RST),
+                   (unsigned long)p->p_filesz,
+                   (unsigned long)p->p_memsz);
+        }
     }
 }
 
@@ -541,8 +525,6 @@ void elf_print_sections(const ElfFile *elf)
     }
 
     printf("\n%s[SECTIONS]%s\n", COL(CLR_CYN), COL(CLR_RST));
-
-    const char *addr_fmt = elf->is32 ? "0x%08lx" : "0x%08lx";
 
     for (uint16_t i = 0; i < elf->shnum; i++) {
         const Elf64_Shdr *s = &elf->sections[i];
@@ -556,27 +538,25 @@ void elf_print_sections(const ElfFile *elf)
 
         const char *col = "";
         if (s->sh_flags & SHF_EXECINSTR)
-            col = COL(CLR_GRN);
+            col = CLR_GRN;
         else if (s->sh_flags & SHF_WRITE)
-            col = COL(CLR_YEL);
+            col = CLR_YEL;
         else if (s->sh_flags & SHF_ALLOC)
-            col = COL(CLR_CYN);
+            col = CLR_CYN;
 
-        printf("  %s[%2u] %-18s%s  TYPE=%-10s", col, i, name, COL(CLR_RST), sh_type_str(s->sh_type));
+        printf("  %s[%2u] %-18s%s  TYPE=%-10s", COL(col), i, name, COL(CLR_RST), sh_type_str(s->sh_type));
 
         if (flags[0])
             printf("  FLAGS=%-3s", flags);
-        if (s->sh_addr) {
-            printf("  ADDR=");
-            printf(addr_fmt, (unsigned long)s->sh_addr);
-        }
+        if (s->sh_addr)
+            printf("  ADDR=%s0x%08lx%s", COL(CLR_CYN), (unsigned long)s->sh_addr, COL(CLR_RST));
         if (s->sh_offset)
             printf("  OFF=0x%06lx", (unsigned long)s->sh_offset);
         if (s->sh_size)
             printf("  SIZE=0x%lx", (unsigned long)s->sh_size);
 
         if (i == elf->entry_sec)
-            printf("  %s<-- entry%s", COL(CLR_GRN), COL(CLR_RST));
+            printf("  %s<-- entry%s", COL(CLR_BGRN), COL(CLR_RST));
 
         printf("\n");
     }
@@ -586,21 +566,25 @@ static void print_symbol_table(const ElfFile *elf, const ElfSymbolInfo *syms, si
 {
     printf("\n%s[%s]%s\n", COL(CLR_CYN), title, COL(CLR_RST));
 
-    const char *fmt = elf->is32
-        ? "  %08lx  %-6s  %4lu  %s\n"
-        : "  %016lx  %-6s  %4lu  %s\n";
-
     for (size_t i = 1; i < count; i++) {
         const ElfSymbolInfo *s = &syms[i];
         
         if (s->type != STT_FUNC && s->type != STT_OBJECT)
             continue;
 
-        printf(fmt,
-               (unsigned long)s->value,
-               sym_type_str(s->type),
-               (unsigned long)s->size,
-               s->name);
+        const char *tcol = (s->type == STT_FUNC) ? CLR_GRN : CLR_YEL;
+
+        if (elf->is32) {
+            printf("  %s%08lx%s  %s%-6s%s  %4lu  %s\n",
+                   COL(CLR_CYN), (unsigned long)s->value, COL(CLR_RST),
+                   COL(tcol), sym_type_str(s->type), COL(CLR_RST),
+                   (unsigned long)s->size, s->name);
+        } else {
+            printf("  %s%016lx%s  %s%-6s%s  %4lu  %s\n",
+                   COL(CLR_CYN), (unsigned long)s->value, COL(CLR_RST),
+                   COL(tcol), sym_type_str(s->type), COL(CLR_RST),
+                   (unsigned long)s->size, s->name);
+        }
     }
 }
 
@@ -615,9 +599,29 @@ void elf_print_dynsym(const ElfFile *elf)
 
 void elf_print_symtab(const ElfFile *elf)
 {
-    if (!elf->symtab || elf->symtab_count == 0)
+    if (!elf->symtab || elf->symtab_count == 0) {
+        fprintf(stderr, "  %snote:%s no .symtab (binary is stripped)\n", COL(CLR_DIM), COL(CLR_RST));
         return;
+    }
     print_symbol_table(elf, elf->symtab, elf->symtab_count, "SYMTAB");
+}
+
+void elf_print_entry(const ElfFile *elf)
+{
+    const Elf64_Ehdr *e = &elf->ehdr;
+
+    printf("\n%s[ENTRY]%s\n", COL(CLR_CYN), COL(CLR_RST));
+    
+    if (elf->is32)
+        printf("  Address : %s0x%08lx%s", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST));
+    else
+        printf("  Address : %s0x%016lx%s", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST));
+
+    if (elf->entry_sec >= 0 && elf->shstrtab) {
+        const char *name = elf->shstrtab + elf->sections[elf->entry_sec].sh_name;
+        printf("  (in %s)", name);
+    }
+    printf("\n");
 }
 
 static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t addr)
@@ -625,7 +629,6 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
     const ElfSymbolInfo *best = NULL;
     uint64_t best_dist = UINT64_MAX;
 
-    // check symtab first (higher priority)
     for (size_t i = 1; i < elf->symtab_count; i++) {
         const ElfSymbolInfo *s = &elf->symtab[i];
         
@@ -646,7 +649,6 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
         }
     }
 
-    // then check dynsym
     for (size_t i = 1; i < elf->dynsym_count; i++) {
         const ElfSymbolInfo *s = &elf->dynsyms[i];
         
@@ -674,14 +676,13 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
 
 void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
 {
-    const char *addr_fmt = elf->is32 ? "0x%08lx" : "0x%016lx";
-
     printf("\n%s[ADDR]%s\n", COL(CLR_CYN), COL(CLR_RST));
-    printf("  Address  : ");
-    printf(addr_fmt, (unsigned long)addr);
-    printf("\n");
+    
+    if (elf->is32)
+        printf("  Address  : %s0x%08lx%s\n", COL(CLR_GRN), (unsigned long)addr, COL(CLR_RST));
+    else
+        printf("  Address  : %s0x%016lx%s\n", COL(CLR_GRN), (unsigned long)addr, COL(CLR_RST));
 
-    // find segment
     int seg_idx = -1;
     for (uint16_t i = 0; i < elf->phnum; i++) {
         const Elf64_Phdr *p = &elf->phdrs[i];
@@ -696,17 +697,21 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
         
-        printf("  Segment  : [%2d] %-12s  %s  VADDR=", seg_idx, ph_type_str(p->p_type), flags);
-        printf(addr_fmt, (unsigned long)p->p_vaddr);
-        printf("\n");
+        if (elf->is32)
+            printf("  Segment  : [%2d] %-12s  %s  VADDR=%s0x%08lx%s\n",
+                   seg_idx, ph_type_str(p->p_type), flags,
+                   COL(CLR_CYN), (unsigned long)p->p_vaddr, COL(CLR_RST));
+        else
+            printf("  Segment  : [%2d] %-12s  %s  VADDR=%s0x%016lx%s\n",
+                   seg_idx, ph_type_str(p->p_type), flags,
+                   COL(CLR_CYN), (unsigned long)p->p_vaddr, COL(CLR_RST));
 
         uint64_t file_off = p->p_offset + (addr - p->p_vaddr);
         printf("  File off : 0x%08lx\n", (unsigned long)file_off);
     } else {
-        printf("  Segment  : (not in any PT_LOAD segment)\n");
+        printf("  Segment  : %s(not in any PT_LOAD segment)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
 
-    // find section
     int sec_idx = -1;
     for (uint16_t i = 0; i < elf->shnum; i++) {
         const Elf64_Shdr *s = &elf->sections[i];
@@ -718,24 +723,113 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
 
     if (sec_idx >= 0 && elf->shstrtab) {
         const char *name = elf->shstrtab + elf->sections[sec_idx].sh_name;
-        printf("  Section  : [%2d] %s\n", sec_idx, name);
+        printf("  Section  : [%2d] %s%s%s\n", sec_idx, COL(CLR_GRN), name, COL(CLR_RST));
     } else {
-        printf("  Section  : (no matching section)\n");
+        printf("  Section  : %s(no matching section)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
 
-    // find symbol
     const ElfSymbolInfo *sym = find_symbol_for_addr(elf, addr);
     if (sym) {
         uint64_t offset = addr - sym->value;
         const char *src = (sym->source == SYM_SRC_SYMTAB) ? "SYMTAB" : "DYNSYM";
         
         if (offset == 0)
-            printf("  Symbol   : %s (%s, %s)\n", sym->name, sym_type_str(sym->type), src);
+            printf("  Symbol   : %s%s%s (%s, %s)\n", COL(CLR_MAG), sym->name, COL(CLR_RST), sym_type_str(sym->type), src);
         else
-            printf("  Symbol   : %s+0x%lx (%s, %s)\n", sym->name, (unsigned long)offset, sym_type_str(sym->type), src);
+            printf("  Symbol   : %s%s%s+0x%lx (%s, %s)\n", COL(CLR_MAG), sym->name, COL(CLR_RST), (unsigned long)offset, sym_type_str(sym->type), src);
     } else {
-        printf("  Symbol   : (no matching symbol)\n");
+        printf("  Symbol   : %s(no matching symbol)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
+}
+
+int elf_find_section(const ElfFile *elf, const char *name, uint64_t *off, uint64_t *size)
+{
+    if (!elf->shstrtab || elf->shnum == 0)
+        return -1;
+
+    for (uint16_t i = 0; i < elf->shnum; i++) {
+        const Elf64_Shdr *s = &elf->sections[i];
+        const char *sname = elf->shstrtab + s->sh_name;
+
+        if (strcmp(sname, name) == 0) {
+            *off = s->sh_offset;
+            *size = s->sh_size;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
+{
+    if (!elf->path)
+        return;
+
+    FILE *fp = fopen(elf->path, "rb");
+    if (!fp) {
+        fprintf(stderr, "%serror:%s can't reopen file\n", COL(CLR_RED), COL(CLR_RST));
+        return;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long fsize = ftell(fp);
+
+    if (offset >= (uint64_t)fsize) {
+        fprintf(stderr, "%serror:%s offset out of bounds\n", COL(CLR_RED), COL(CLR_RST));
+        fclose(fp);
+        return;
+    }
+
+    if (offset + len > (uint64_t)fsize)
+        len = fsize - offset;
+
+    uint8_t *buf = malloc(len);
+    if (!buf) {
+        fclose(fp);
+        return;
+    }
+
+    fseek(fp, offset, SEEK_SET);
+    size_t rd = fread(buf, 1, len, fp);
+    fclose(fp);
+
+    printf("\n");
+    for (size_t i = 0; i < rd; i += 16) {
+        printf("  %s%08lx%s  ", COL(HEX_ADDR), (unsigned long)(offset + i), COL(CLR_RST));
+
+        for (int j = 0; j < 16; j++) {
+            if (i + j < rd) {
+                uint8_t b = buf[i + j];
+                const char *col;
+                
+                if (b == 0x00)
+                    col = HEX_NULL;
+                else if (b < 0x20)
+                    col = HEX_LOW;
+                else if (b < 0x7f)
+                    col = HEX_PRINT;
+                else
+                    col = HEX_HIGH;
+                
+                printf("%s%02x%s ", COL(col), b, COL(CLR_RST));
+            } else {
+                printf("   ");
+            }
+            if (j == 7) printf(" ");
+        }
+
+        printf(" %s|%s", COL(CLR_DIM), COL(CLR_RST));
+        for (int j = 0; j < 16 && i + j < rd; j++) {
+            uint8_t c = buf[i + j];
+            if (c >= 0x20 && c < 0x7f)
+                printf("%s%c%s", COL(HEX_ASCII), c, COL(CLR_RST));
+            else
+                printf("%s.%s", COL(CLR_DIM), COL(CLR_RST));
+        }
+        printf("%s|%s\n", COL(CLR_DIM), COL(CLR_RST));
+    }
+
+    free(buf);
 }
 
 void elf_free(ElfFile *elf)
@@ -747,4 +841,5 @@ void elf_free(ElfFile *elf)
     free(elf->dynstr);
     free(elf->symtab);
     free(elf->strtab);
+    free(elf->path);
 }

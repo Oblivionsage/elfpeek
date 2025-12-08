@@ -1,2 +1,19 @@
-elfpeek
+# Build artifacts
 *.o
+elfpeek
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Debug
+*.dSYM/
+core
+vgcore.*
+
+# OS
+.DS_Store
+Thumbs.db

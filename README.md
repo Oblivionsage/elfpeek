@@ -1,3 +1,4 @@
+cat > README.md << 'EOF'
 <h1 align="center">elfpeek</h1>
 
 <p align="center">
@@ -24,9 +25,15 @@
 
 ---
 
+<p align="center">
+  <img src="assets/demo.gif" alt="elfpeek demo" width="700">
+</p>
+
+---
+
 ## Features
 
-- **Interactive REPL** with readline support (history, tab completion)
+- **Interactive REPL** with readline support (history, line editing)
 - **Dynamic colored prompt** - shows current file: `(elfpeek:ls)`
 - **Colored hexdump** - null (gray), printable (green), control (red), high bytes (yellow)
 - **Colored sections** - executable (green), writable (yellow), read-only (cyan)
@@ -47,18 +54,6 @@ Optional: Install `libreadline-dev` for command history in REPL.
 ### Interactive Mode
 ```bash
 ./elfpeek
-```
-```
-elfpeek interactive mode
-type 'help' for commands, 'quit' to exit
-
-(elfpeek) open /bin/ls
-opened /bin/ls (ELF64, little-endian)
-(elfpeek:ls) info
-(elfpeek:ls) sections
-(elfpeek:ls) dump .rodata 64
-(elfpeek:ls) resolve 0x6760
-(elfpeek:ls) quit
 ```
 
 ### One-shot Mode
@@ -83,66 +78,18 @@ opened /bin/ls (ELF64, little-endian)
 | `help` | `?` | Show help |
 | `quit` | `q` | Exit |
 
-## Examples
+## Color Coding
 
-### ELF Header
-```
-(elfpeek:ls) info
+**Sections:**
+- Green = executable (`.text`, `.plt`)
+- Yellow = writable (`.data`, `.bss`)
+- Cyan = read-only (`.rodata`)
 
-[ELF HEADER]
-  Class       : ELF64 (little-endian)
-  Type        : DYN (Shared object)
-  Machine     : x86_64
-  Entry       : 0x0000000000006760  (in .text)
-  PHDR offset : 0x00000040 (14 entries)
-  SHDR offset : 0x00026428 (30 entries)
-```
-
-### Colored Sections
-```
-(elfpeek:ls) sections
-
-[SECTIONS]
-  [11] .init     TYPE=PROGBITS  FLAGS=AX   ADDR=0x00004000  <-- green (executable)
-  [14] .text     TYPE=PROGBITS  FLAGS=AX   ADDR=0x00004740  <-- entry
-  [16] .rodata   TYPE=PROGBITS  FLAGS=A    ADDR=0x0001b000  <-- cyan (read-only)
-  [25] .data     TYPE=PROGBITS  FLAGS=WA   ADDR=0x00027000  <-- yellow (writable)
-  [26] .bss      TYPE=NOBITS    FLAGS=WA   ADDR=0x00027280
-```
-
-### Colored Hexdump
-```
-(elfpeek:ls) dump .rodata 64
-
-  0001b000  01 00 02 00 cd cc cc 3d  66 66 66 3f cd cc 8c 3f  |.......=fff?...?|
-  0001b010  00 00 80 5f 00 00 00 5f  00 00 20 41 00 00 00 00  |..._..._.. A....|
-```
-
-Color coding:
-- **Gray/dim**: null bytes (`00`)
-- **Green**: printable ASCII (`20`-`7E`)
-- **Red**: control characters (`01`-`1F`)
-- **Yellow**: high bytes (`80`-`FF`)
-- **Cyan**: addresses
-
-### Address Resolution
-```
-(elfpeek:ls) resolve 0x6760
-
-[ADDR]
-  Address  : 0x0000000000006760
-  Segment  : [ 3] LOAD  R X  VADDR=0x0000000000004000
-  File off : 0x00006760
-  Section  : [14] .text
-  Symbol   : error_at_line+0x1c89 (FUNC, DYNSYM)
-```
-
-### Dump by File Offset
-```
-(elfpeek:ls) dump @0x1000 32
-
-  00001000  7c 05 00 00 11 00 1a 00  a8 72 02 00 00 00 00 00  ||........r......|
-```
+**Hexdump:**
+- Gray = null bytes (`00`)
+- Green = printable ASCII (`20`-`7E`)
+- Red = control characters (`01`-`1F`)
+- Yellow = high bytes (`80`-`FF`)
 
 ## Why?
 
@@ -174,3 +121,4 @@ Also serves as readable ELF parsing example in C. Handles stripped and segment-o
 ## License
 
 MIT
+EOF

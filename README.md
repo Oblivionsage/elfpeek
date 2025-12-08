@@ -26,7 +26,7 @@ cat > README.md << 'EOF'
 ---
 
 <p align="center">
-  <img src="assets/demo.gif" alt="elfpeek demo" width="700">
+  <img src="assets/demo.gif" alt="elfpeek demo" width="100%">
 </p>
 
 ---

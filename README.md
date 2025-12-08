@@ -1,7 +1,7 @@
 <h1 align="center">elfpeek</h1>
 
 <p align="center">
-  <img src="assets/logo.png" alt="elfpeek logo" width="600">
+  <img src="assets/logo.png" alt="elfpeek logo" width="200">
 </p>
 
 <p align="center">
@@ -21,6 +21,7 @@
 <p align="center">
   Minimal ELF inspector written in C for quick binary layout inspection
 </p>
+---
 
 ![demo](assets/demo.gif)
 

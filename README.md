@@ -1,10 +1,6 @@
 <h1 align="center">elfpeek</h1>
 
 <p align="center">
-  <img src="assets/logo.png" alt="elfpeek logo" width="200">
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/written%20in-C-blue?style=flat-square" alt="C">
   <img src="https://img.shields.io/badge/platform-Linux-green?style=flat-square" alt="Linux">
   <img src="https://img.shields.io/badge/arch-ELF32%20%7C%20ELF64-orange?style=flat-square" alt="ELF32 | ELF64">

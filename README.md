@@ -26,6 +26,18 @@
 
 ---
 
+## Why?
+
+Not a replacement for `readelf` or `objdump`. Just a quick, focused tool for common RE questions:
+
+- What's the binary layout?
+- Which segment/section contains this address?
+- What's the file offset for this VA?
+- What bytes are at this location?
+- Which function owns this address?
+
+Also serves as readable ELF parsing example in C. Handles stripped and segment-only binaries gracefully.
+
 ## Features
 
 - **Interactive REPL** with readline support (history, line editing)
@@ -85,18 +97,6 @@ Optional: Install `libreadline-dev` for command history in REPL.
 - Green = printable ASCII (`20`-`7E`)
 - Red = control characters (`01`-`1F`)
 - Yellow = high bytes (`80`-`FF`)
-
-## Why?
-
-Not a replacement for `readelf` or `objdump`. Just a quick, focused tool for common RE questions:
-
-- What's the binary layout?
-- Which segment/section contains this address?
-- What's the file offset for this VA?
-- What bytes are at this location?
-- Which function owns this address?
-
-Also serves as readable ELF parsing example in C. Handles stripped and segment-only binaries gracefully.
 
 ## Test Binaries
 

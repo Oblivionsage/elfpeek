@@ -63,7 +63,7 @@ Optional: Install `libreadline-dev` for command history in REPL.
 ./elfpeek
 ```
 
-### One-shot Mode
+### Quick Mode
 ```bash
 ./elfpeek /bin/ls           # show headers, sections, symbols
 ./elfpeek /bin/ls 0x6760    # resolve address

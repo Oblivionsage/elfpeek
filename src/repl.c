@@ -42,6 +42,7 @@ static int cmd_symbols(int argc, char **argv);
 static int cmd_resolve(int argc, char **argv);
 static int cmd_dump(int argc, char **argv);
 static int cmd_strings(int argc, char **argv);
+static int cmd_relocs(int argc, char **argv);
 static int cmd_help(int argc, char **argv);
 static int cmd_quit(int argc, char **argv);
 
@@ -57,6 +58,7 @@ static struct command cmds[] = {
     {"resolve",  "r",   "resolve <addr>        resolve virtual address",  cmd_resolve,  1},
     {"dump",     "d",   "dump <.sec|@off> [n]  hex dump",                  cmd_dump,     1},
     {"strings",  "str", "strings [.sec] [min]  extract strings",          cmd_strings,  1},
+    {"relocs",   "rel", "relocs                show relocations",          cmd_relocs,   1},
     {"help",     "?",   "help [cmd]            show help",                cmd_help,     0},
     {"quit",     "q",   "quit                  exit",                     cmd_quit,     0},
     {NULL, NULL, NULL, NULL, 0}
@@ -252,6 +254,13 @@ static int cmd_dump(int argc, char **argv)
     }
 
     elf_hexdump(&g_elf, off, len);
+    return 0;
+}
+
+static int cmd_relocs(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    elf_print_relocs(&g_elf);
     return 0;
 }
 

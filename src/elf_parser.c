@@ -947,6 +947,116 @@ void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
 // 
 
 
+
+void elf_print_relocs(const ElfFile *elf)
+{
+    if (!elf->path || elf->shnum == 0)
+        return;
+
+    FILE *fp = fopen(elf->path, "rb");
+    if (!fp)
+        return;
+
+    int found = 0;
+
+    for (uint16_t i = 0; i < elf->shnum; i++) {
+        const Elf64_Shdr *s = &elf->sections[i];
+        
+        /* only care about relocation sections */
+        if (s->sh_type != SHT_RELA && s->sh_type != SHT_REL)
+            continue;
+
+        const char *name = "";
+        if (elf->shstrtab)
+            name = elf->shstrtab + s->sh_name;
+
+        int is_rela = (s->sh_type == SHT_RELA);
+        size_t ent_size = elf->is32 
+            ? (is_rela ? sizeof(Elf32_Rela) : sizeof(Elf32_Rel))
+            : (is_rela ? sizeof(Elf64_Rela) : sizeof(Elf64_Rel));
+        
+        size_t count = s->sh_size / ent_size;
+        if (count == 0)
+            continue;
+
+        printf("\n%s[%s]%s (%zu entries)\n", 
+               COL(CLR_CYN), name, COL(CLR_RST), count);
+        found = 1;
+
+        fseek(fp, s->sh_offset, SEEK_SET);
+
+        for (size_t j = 0; j < count; j++) {
+            uint64_t r_offset, r_info, r_addend = 0;
+            uint32_t r_type;
+            uint64_t r_sym;
+
+            if (elf->is32) {
+                if (is_rela) {
+                    Elf32_Rela r;
+                    if (fread(&r, sizeof(r), 1, fp) != 1) break;
+                    r_offset = SWAP32(elf, r.r_offset);
+                    r_info = SWAP32(elf, r.r_info);
+                    r_addend = elf->swap ? (int32_t)bswap32(r.r_addend) : r.r_addend;
+                    r_type = ELF32_R_TYPE(r_info);
+                    r_sym = ELF32_R_SYM(r_info);
+                } else {
+                    Elf32_Rel r;
+                    if (fread(&r, sizeof(r), 1, fp) != 1) break;
+                    r_offset = SWAP32(elf, r.r_offset);
+                    r_info = SWAP32(elf, r.r_info);
+                    r_type = ELF32_R_TYPE(r_info);
+                    r_sym = ELF32_R_SYM(r_info);
+                }
+            } else {
+                if (is_rela) {
+                    Elf64_Rela r;
+                    if (fread(&r, sizeof(r), 1, fp) != 1) break;
+                    r_offset = SWAP64(elf, r.r_offset);
+                    r_info = SWAP64(elf, r.r_info);
+                    r_addend = elf->swap ? (int64_t)bswap64(r.r_addend) : r.r_addend;
+                    r_type = ELF64_R_TYPE(r_info);
+                    r_sym = ELF64_R_SYM(r_info);
+                } else {
+                    Elf64_Rel r;
+                    if (fread(&r, sizeof(r), 1, fp) != 1) break;
+                    r_offset = SWAP64(elf, r.r_offset);
+                    r_info = SWAP64(elf, r.r_info);
+                    r_type = ELF64_R_TYPE(r_info);
+                    r_sym = ELF64_R_SYM(r_info);
+                }
+            }
+
+            /* try to get symbol name */
+            const char *sym_name = NULL;
+            if (r_sym > 0 && elf->dynsyms && r_sym < elf->dynsym_count)
+                sym_name = elf->dynsyms[r_sym].name;
+
+            if (elf->is32) {
+                printf("  %s%08lx%s  type=%2u  sym=%4lu", 
+                       COL(CLR_CYN), (unsigned long)r_offset, COL(CLR_RST),
+                       r_type, (unsigned long)r_sym);
+            } else {
+                printf("  %s%012lx%s  type=%2u  sym=%4lu", 
+                       COL(CLR_CYN), (unsigned long)r_offset, COL(CLR_RST),
+                       r_type, (unsigned long)r_sym);
+            }
+
+            if (is_rela && r_addend != 0)
+                printf("  addend=%ld", (long)r_addend);
+
+            if (sym_name && *sym_name)
+                printf("  %s%s%s", COL(CLR_GRN), sym_name, COL(CLR_RST));
+
+            printf("\n");
+        }
+    }
+
+    fclose(fp);
+
+    if (!found)
+        printf("  %sno relocation sections%s\n", COL(CLR_DIM), COL(CLR_RST));
+}
+
 /* Extract printable strings from a section */
 void elf_strings(const ElfFile *elf, const char *section, size_t min_len)
 {

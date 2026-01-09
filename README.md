@@ -115,7 +115,6 @@ Optional: Install `libreadline-dev` for command history in REPL.
 
 ## TODO
 
-- [ ] `strings` command - extract printable strings
 - [ ] `relocs` command - show relocations  
 - [ ] `got`/`plt` analysis
 - [ ] Disassembly with capstone

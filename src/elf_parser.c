@@ -1,4 +1,5 @@
 // src/elf_parser.c
+// Main ELF parsing logic - handles both 32/64 bit and endianness
 #define _GNU_SOURCE
 #include "elf_parser.h"
 #include "colors.h"
@@ -7,6 +8,12 @@
 #include <string.h>
 
 int use_colors = 1;
+
+
+// Byte swapping helpers for big-endian ELF files
+// We need these because x86 is little-endian but some ELFs (PowerPC, SPARC)
+// are big-endian. Rather than pulling in byteswap.h we just roll our own.
+
 
 static inline uint16_t bswap16(uint16_t x) {
     return (x >> 8) | (x << 8);
@@ -21,9 +28,15 @@ static inline uint64_t bswap64(uint64_t x) {
     return ((uint64_t)bswap32(x & 0xffffffff) << 32) | bswap32(x >> 32);
 }
 
+// Conditional swap macros - only swap if ELF is big-endian
 #define SWAP16(elf, x) ((elf)->swap ? bswap16(x) : (x))
 #define SWAP32(elf, x) ((elf)->swap ? bswap32(x) : (x))
 #define SWAP64(elf, x) ((elf)->swap ? bswap64(x) : (x))
+
+
+// String conversion helpers
+// These turn numeric constants into human-readable strings for output
+
 
 static const char *elf_type_str(uint16_t type)
 {
@@ -31,7 +44,7 @@ static const char *elf_type_str(uint16_t type)
     case ET_NONE: return "NONE";
     case ET_REL:  return "REL (Relocatable)";
     case ET_EXEC: return "EXEC (Executable)";
-    case ET_DYN:  return "DYN (Shared object)";
+    case ET_DYN:  return "DYN (Shared object)";  // PIE executables are also DYN
     case ET_CORE: return "CORE (Core dump)";
     default:      return "Unknown";
     }
@@ -57,16 +70,16 @@ static const char *sh_type_str(uint32_t type)
 {
     switch (type) {
     case SHT_NULL:     return "NULL";
-    case SHT_PROGBITS: return "PROGBITS";
-    case SHT_SYMTAB:   return "SYMTAB";
+    case SHT_PROGBITS: return "PROGBITS";  // code or data
+    case SHT_SYMTAB:   return "SYMTAB";    // full symbol table (stripped = gone)
     case SHT_STRTAB:   return "STRTAB";
-    case SHT_RELA:     return "RELA";
+    case SHT_RELA:     return "RELA";      // relocations with addend
     case SHT_HASH:     return "HASH";
     case SHT_DYNAMIC:  return "DYNAMIC";
     case SHT_NOTE:     return "NOTE";
-    case SHT_NOBITS:   return "NOBITS";
-    case SHT_REL:      return "REL";
-    case SHT_DYNSYM:   return "DYNSYM";
+    case SHT_NOBITS:   return "NOBITS";    // .bss - takes no space in file
+    case SHT_REL:      return "REL";       // relocations without addend
+    case SHT_DYNSYM:   return "DYNSYM";    // dynamic symbols (survives strip)
     case SHT_INIT_ARRAY:  return "INIT_ARRAY";
     case SHT_FINI_ARRAY:  return "FINI_ARRAY";
     case SHT_GNU_HASH: return "GNU_HASH";
@@ -80,15 +93,15 @@ static const char *ph_type_str(uint32_t type)
 {
     switch (type) {
     case PT_NULL:    return "NULL";
-    case PT_LOAD:    return "LOAD";
-    case PT_DYNAMIC: return "DYNAMIC";
-    case PT_INTERP:  return "INTERP";
+    case PT_LOAD:    return "LOAD";       // actual loadable segment
+    case PT_DYNAMIC: return "DYNAMIC";    // dynamic linking info
+    case PT_INTERP:  return "INTERP";     // path to interpreter (ld.so)
     case PT_NOTE:    return "NOTE";
-    case PT_PHDR:    return "PHDR";
-    case PT_TLS:     return "TLS";
+    case PT_PHDR:    return "PHDR";       // program header table itself
+    case PT_TLS:     return "TLS";        // thread-local storage
     case PT_GNU_EH_FRAME: return "GNU_EH_FRAME";
-    case PT_GNU_STACK:    return "GNU_STACK";
-    case PT_GNU_RELRO:    return "GNU_RELRO";
+    case PT_GNU_STACK:    return "GNU_STACK";    // stack permissions
+    case PT_GNU_RELRO:    return "GNU_RELRO";    // read-only after reloc
     case PT_GNU_PROPERTY: return "GNU_PROPERTY";
     default:         return "UNKNOWN";
     }
@@ -98,13 +111,18 @@ static const char *sym_type_str(unsigned char type)
 {
     switch (type) {
     case STT_NOTYPE:  return "NOTYPE";
-    case STT_OBJECT:  return "OBJECT";
-    case STT_FUNC:    return "FUNC";
+    case STT_OBJECT:  return "OBJECT";   // data (variables)
+    case STT_FUNC:    return "FUNC";     // code (functions)
     case STT_SECTION: return "SECTION";
     case STT_FILE:    return "FILE";
     default:          return "OTHER";
     }
 }
+
+
+// Flag formatting
+// Turn flag bits into human-readable strings like "RWX" or "AX"
+
 
 static void format_flags(uint64_t flags, char *buf, size_t len)
 {
@@ -122,6 +140,12 @@ static void format_phdr_flags(uint32_t flags, char *buf)
     buf[3] = '\0';
 }
 
+
+// ELF header reading
+// We store everything internally as 64-bit, converting from 32 if needed.
+// This makes the rest of the code simpler - no #ifdefs everywhere.
+
+
 static int read_ehdr32(FILE *fp, ElfFile *elf)
 {
     Elf32_Ehdr e32;
@@ -130,7 +154,8 @@ static int read_ehdr32(FILE *fp, ElfFile *elf)
         return -1;
 
     memcpy(elf->ehdr.e_ident, e32.e_ident, EI_NIDENT);
-    
+
+    // Widen 32-bit fields to 64-bit, swapping if needed
     elf->ehdr.e_type      = SWAP16(elf, e32.e_type);
     elf->ehdr.e_machine   = SWAP16(elf, e32.e_machine);
     elf->ehdr.e_version   = SWAP32(elf, e32.e_version);
@@ -144,7 +169,7 @@ static int read_ehdr32(FILE *fp, ElfFile *elf)
     elf->ehdr.e_shentsize = SWAP16(elf, e32.e_shentsize);
     elf->ehdr.e_shnum     = SWAP16(elf, e32.e_shnum);
     elf->ehdr.e_shstrndx  = SWAP16(elf, e32.e_shstrndx);
-    
+
     return 0;
 }
 
@@ -154,6 +179,7 @@ static int read_ehdr64(FILE *fp, ElfFile *elf)
     if (fread(&elf->ehdr, sizeof(elf->ehdr), 1, fp) != 1)
         return -1;
 
+    // Only swap if big-endian
     if (elf->swap) {
         elf->ehdr.e_type      = bswap16(elf->ehdr.e_type);
         elf->ehdr.e_machine   = bswap16(elf->ehdr.e_machine);
@@ -172,11 +198,17 @@ static int read_ehdr64(FILE *fp, ElfFile *elf)
     return 0;
 }
 
+
+// Program headers (segments)
+// These tell the kernel how to load the binary into memory.
+// Sections are for linkers, segments are for loaders.
+
+
 static int read_phdrs(FILE *fp, ElfFile *elf)
 {
     elf->phnum = elf->ehdr.e_phnum;
     if (elf->phnum == 0)
-        return 0;
+        return 0;  // some ELFs have no program headers (relocatables)
 
     elf->phdrs = malloc(elf->phnum * sizeof(Elf64_Phdr));
     if (!elf->phdrs)
@@ -185,6 +217,7 @@ static int read_phdrs(FILE *fp, ElfFile *elf)
     fseek(fp, elf->ehdr.e_phoff, SEEK_SET);
 
     if (elf->is32) {
+        // Read 32-bit, convert to 64-bit
         for (uint16_t i = 0; i < elf->phnum; i++) {
             Elf32_Phdr p32;
             if (fread(&p32, sizeof(p32), 1, fp) != 1)
@@ -218,11 +251,17 @@ static int read_phdrs(FILE *fp, ElfFile *elf)
     return 0;
 }
 
+
+// Section headers
+// These describe logical parts of the binary (.text, .data, .rodata, etc)
+// Stripped binaries might have no sections - we handle that gracefully.
+
+
 static int read_shdrs(FILE *fp, ElfFile *elf)
 {
     elf->shnum = elf->ehdr.e_shnum;
     if (elf->shnum == 0)
-        return 0;
+        return 0;  // segment-only ELF (firmware, some malware)
 
     elf->sections = malloc(elf->shnum * sizeof(Elf64_Shdr));
     if (!elf->sections)
@@ -268,8 +307,16 @@ static int read_shdrs(FILE *fp, ElfFile *elf)
     return 0;
 }
 
+
+// Symbol table loading
+// Symbols are stored in two tables:
+//   .symtab - full symbol table, removed by strip
+//   .dynsym - dynamic symbols, survives strip (needed for linking)
+// Each symbol table has an associated string table for names.
+
+
 static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Shdr *strtab_sec,
-                        ElfSymbolInfo **out_syms, size_t *out_count, 
+                        ElfSymbolInfo **out_syms, size_t *out_count,
                         char **out_strtab, SymbolSource source)
 {
     size_t entry_size = elf->is32 ? sizeof(Elf32_Sym) : sizeof(Elf64_Sym);
@@ -277,10 +324,11 @@ static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Sh
     if (sym_count == 0)
         return 0;
 
+    // Load string table first - symbol names are offsets into this
     char *strtab = malloc(strtab_sec->sh_size);
     if (!strtab)
         return -1;
-    
+
     fseek(fp, strtab_sec->sh_offset, SEEK_SET);
     if (fread(strtab, 1, strtab_sec->sh_size, fp) != strtab_sec->sh_size) {
         free(strtab);
@@ -329,11 +377,12 @@ static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Sh
 
         syms[i].value  = st_value;
         syms[i].size   = st_size;
-        syms[i].type   = ELF64_ST_TYPE(st_info);
-        syms[i].bind   = ELF64_ST_BIND(st_info);
+        syms[i].type   = ELF64_ST_TYPE(st_info);  // low 4 bits
+        syms[i].bind   = ELF64_ST_BIND(st_info);  // high 4 bits
         syms[i].shndx  = st_shndx;
         syms[i].source = source;
-        
+
+        // Point name into the string table (or empty if invalid offset)
         if (st_name < strtab_sec->sh_size)
             syms[i].name = strtab + st_name;
         else
@@ -346,6 +395,11 @@ static int load_symbols(FILE *fp, ElfFile *elf, Elf64_Shdr *symtab_sec, Elf64_Sh
     return 0;
 }
 
+
+// Main parsing entry point
+// Opens file, validates ELF magic, reads all headers and symbols.
+
+
 int elf_parse_file(const char *path, ElfFile *out)
 {
     FILE *fp = fopen(path, "rb");
@@ -355,8 +409,9 @@ int elf_parse_file(const char *path, ElfFile *out)
     }
 
     memset(out, 0, sizeof(*out));
-    out->entry_sec = -1;
+    out->entry_sec = -1;  // -1 means entry point section not found yet
 
+    // Check ELF magic: 0x7f 'E' 'L' 'F'
     unsigned char ident[EI_NIDENT];
     if (fread(ident, 1, EI_NIDENT, fp) != EI_NIDENT) {
         fprintf(stderr, "%serror:%s failed to read elf ident\n", COL(CLR_RED), COL(CLR_RST));
@@ -370,9 +425,11 @@ int elf_parse_file(const char *path, ElfFile *out)
         return -1;
     }
 
+    // Determine 32/64 bit and endianness from ident bytes
     out->is32 = (ident[EI_CLASS] == ELFCLASS32);
-    out->swap = (ident[EI_DATA] == ELFDATA2MSB);
+    out->swap = (ident[EI_DATA] == ELFDATA2MSB);  // big endian = need swap
 
+    // Read ELF header
     if (out->is32) {
         if (read_ehdr32(fp, out) < 0) {
             fprintf(stderr, "%serror:%s failed to read elf32 header\n", COL(CLR_RED), COL(CLR_RST));
@@ -387,24 +444,29 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    // Read program headers (segments)
     if (read_phdrs(fp, out) < 0) {
         fprintf(stderr, "%serror:%s truncated program headers\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
+    // Read section headers
     if (read_shdrs(fp, out) < 0) {
         fprintf(stderr, "%serror:%s truncated section headers\n", COL(CLR_RED), COL(CLR_RST));
         fclose(fp);
         return -1;
     }
 
+    // If no sections, we're done (segment-only ELF)
     if (out->shnum == 0) {
         out->path = strdup(path);
         fclose(fp);
         return 0;
     }
 
+    // Load section name string table (shstrtab)
+    // This is how we know section names like ".text", ".data", etc
     uint16_t stridx = out->ehdr.e_shstrndx;
     if (stridx < out->shnum && stridx != SHN_UNDEF) {
         Elf64_Shdr *strsec = &out->sections[stridx];
@@ -418,6 +480,8 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    // Find which section contains the entry point
+    // Useful for showing "entry in .text" in output
     uint64_t entry = out->ehdr.e_entry;
     for (uint16_t i = 0; i < out->shnum; i++) {
         Elf64_Shdr *s = &out->sections[i];
@@ -427,9 +491,10 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    // Load dynamic symbols (.dynsym) - survives strip
     for (uint16_t i = 0; i < out->shnum; i++) {
         if (out->sections[i].sh_type == SHT_DYNSYM) {
-            uint32_t link = out->sections[i].sh_link;
+            uint32_t link = out->sections[i].sh_link;  // points to string table
             if (link < out->shnum) {
                 load_symbols(fp, out, &out->sections[i], &out->sections[link],
                             &out->dynsyms, &out->dynsym_count, &out->dynstr,
@@ -439,6 +504,7 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
+    // Load static symbols (.symtab) - removed by strip
     for (uint16_t i = 0; i < out->shnum; i++) {
         if (out->sections[i].sh_type == SHT_SYMTAB) {
             uint32_t link = out->sections[i].sh_link;
@@ -451,10 +517,15 @@ int elf_parse_file(const char *path, ElfFile *out)
         }
     }
 
-    out->path = strdup(path);
+    out->path = strdup(path);  // save path for hexdump
     fclose(fp);
     return 0;
 }
+
+
+// Output functions
+// These print parsed info in a readable format with colors
+
 
 void elf_print_header(const ElfFile *elf)
 {
@@ -467,6 +538,7 @@ void elf_print_header(const ElfFile *elf)
     printf("  Type        : %s\n", elf_type_str(e->e_type));
     printf("  Machine     : %s\n", elf_machine_str(e->e_machine));
 
+    // Show entry point with section name if we found it
     if (elf->entry_sec >= 0 && elf->shstrtab) {
         const char *name = elf->shstrtab + elf->sections[elf->entry_sec].sh_name;
         if (elf->is32)
@@ -497,6 +569,7 @@ void elf_print_phdrs(const ElfFile *elf)
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
 
+        // Color: green=exec, yellow=writable
         const char *fcol = (p->p_flags & PF_X) ? CLR_GRN : ((p->p_flags & PF_W) ? CLR_YEL : "");
 
         if (elf->is32) {
@@ -536,6 +609,7 @@ void elf_print_sections(const ElfFile *elf)
         char flags[8];
         format_flags(s->sh_flags, flags, sizeof(flags));
 
+        // Color by permission: green=exec, yellow=write, cyan=readonly
         const char *col = "";
         if (s->sh_flags & SHF_EXECINSTR)
             col = CLR_GRN;
@@ -555,6 +629,7 @@ void elf_print_sections(const ElfFile *elf)
         if (s->sh_size)
             printf("  SIZE=0x%lx", (unsigned long)s->sh_size);
 
+        // Mark entry point section
         if (i == elf->entry_sec)
             printf("  %s<-- entry%s", COL(CLR_BGRN), COL(CLR_RST));
 
@@ -566,9 +641,10 @@ static void print_symbol_table(const ElfFile *elf, const ElfSymbolInfo *syms, si
 {
     printf("\n%s[%s]%s\n", COL(CLR_CYN), title, COL(CLR_RST));
 
-    for (size_t i = 1; i < count; i++) {
+    for (size_t i = 1; i < count; i++) {  // skip index 0 (null symbol)
         const ElfSymbolInfo *s = &syms[i];
-        
+
+        // Only show functions and objects, skip other types
         if (s->type != STT_FUNC && s->type != STT_OBJECT)
             continue;
 
@@ -611,7 +687,7 @@ void elf_print_entry(const ElfFile *elf)
     const Elf64_Ehdr *e = &elf->ehdr;
 
     printf("\n%s[ENTRY]%s\n", COL(CLR_CYN), COL(CLR_RST));
-    
+
     if (elf->is32)
         printf("  Address : %s0x%08lx%s", COL(CLR_GRN), (unsigned long)e->e_entry, COL(CLR_RST));
     else
@@ -624,14 +700,20 @@ void elf_print_entry(const ElfFile *elf)
     printf("\n");
 }
 
+
+// Address resolution
+// Given a virtual address, find what segment/section/symbol it belongs to.
+// This is the main feature for quick binary triage.
+
 static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t addr)
 {
     const ElfSymbolInfo *best = NULL;
     uint64_t best_dist = UINT64_MAX;
 
+    // Search .symtab first (more complete info)
     for (size_t i = 1; i < elf->symtab_count; i++) {
         const ElfSymbolInfo *s = &elf->symtab[i];
-        
+
         if (s->value == 0 || !s->name || !s->name[0])
             continue;
         if (s->type != STT_FUNC && s->type != STT_OBJECT)
@@ -639,9 +721,11 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
         if (s->value > addr)
             continue;
 
+        // Exact match if address falls within symbol size
         if (s->size > 0 && addr < s->value + s->size)
             return s;
 
+        // Otherwise track closest symbol before this address
         uint64_t dist = addr - s->value;
         if (dist < best_dist) {
             best_dist = dist;
@@ -649,9 +733,10 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
         }
     }
 
+    // Fall back to .dynsym
     for (size_t i = 1; i < elf->dynsym_count; i++) {
         const ElfSymbolInfo *s = &elf->dynsyms[i];
-        
+
         if (s->value == 0 || !s->name || !s->name[0])
             continue;
         if (s->type != STT_FUNC && s->type != STT_OBJECT)
@@ -660,6 +745,7 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
             continue;
 
         if (s->size > 0 && addr < s->value + s->size) {
+            // Only replace if we didn't find a symtab match
             if (!best || best->source != SYM_SRC_SYMTAB)
                 return s;
         }
@@ -677,12 +763,13 @@ static const ElfSymbolInfo *find_symbol_for_addr(const ElfFile *elf, uint64_t ad
 void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
 {
     printf("\n%s[ADDR]%s\n", COL(CLR_CYN), COL(CLR_RST));
-    
+
     if (elf->is32)
         printf("  Address  : %s0x%08lx%s\n", COL(CLR_GRN), (unsigned long)addr, COL(CLR_RST));
     else
         printf("  Address  : %s0x%016lx%s\n", COL(CLR_GRN), (unsigned long)addr, COL(CLR_RST));
 
+    // Find containing segment (PT_LOAD)
     int seg_idx = -1;
     for (uint16_t i = 0; i < elf->phnum; i++) {
         const Elf64_Phdr *p = &elf->phdrs[i];
@@ -696,7 +783,7 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         const Elf64_Phdr *p = &elf->phdrs[seg_idx];
         char flags[4];
         format_phdr_flags(p->p_flags, flags);
-        
+
         if (elf->is32)
             printf("  Segment  : [%2d] %-12s  %s  VADDR=%s0x%08lx%s\n",
                    seg_idx, ph_type_str(p->p_type), flags,
@@ -706,12 +793,14 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
                    seg_idx, ph_type_str(p->p_type), flags,
                    COL(CLR_CYN), (unsigned long)p->p_vaddr, COL(CLR_RST));
 
+        // Calculate file offset from VA
         uint64_t file_off = p->p_offset + (addr - p->p_vaddr);
         printf("  File off : 0x%08lx\n", (unsigned long)file_off);
     } else {
         printf("  Segment  : %s(not in any PT_LOAD segment)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
 
+    // Find containing section
     int sec_idx = -1;
     for (uint16_t i = 0; i < elf->shnum; i++) {
         const Elf64_Shdr *s = &elf->sections[i];
@@ -728,11 +817,12 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         printf("  Section  : %s(no matching section)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
 
+    // Find nearest symbol
     const ElfSymbolInfo *sym = find_symbol_for_addr(elf, addr);
     if (sym) {
         uint64_t offset = addr - sym->value;
         const char *src = (sym->source == SYM_SRC_SYMTAB) ? "SYMTAB" : "DYNSYM";
-        
+
         if (offset == 0)
             printf("  Symbol   : %s%s%s (%s, %s)\n", COL(CLR_MAG), sym->name, COL(CLR_RST), sym_type_str(sym->type), src);
         else
@@ -741,6 +831,11 @@ void elf_resolve_addr(const ElfFile *elf, uint64_t addr)
         printf("  Symbol   : %s(no matching symbol)%s\n", COL(CLR_DIM), COL(CLR_RST));
     }
 }
+
+
+// Section lookup by name
+// Used by hexdump to find offset/size of named sections like ".text"
+
 
 int elf_find_section(const ElfFile *elf, const char *name, uint64_t *off, uint64_t *size)
 {
@@ -759,6 +854,15 @@ int elf_find_section(const ElfFile *elf, const char *name, uint64_t *off, uint64
     }
     return -1;
 }
+
+
+// Hexdump
+// Dumps raw bytes from file with colored output:
+//   - gray:   null bytes (00)
+//   - green:  printable ASCII (20-7e)
+//   - red:    control chars (01-1f)
+//   - yellow: high bytes (80-ff)
+
 
 void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
 {
@@ -780,6 +884,7 @@ void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
         return;
     }
 
+    // Clamp length to file size
     if (offset + len > (uint64_t)fsize)
         len = fsize - offset;
 
@@ -795,29 +900,33 @@ void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
 
     printf("\n");
     for (size_t i = 0; i < rd; i += 16) {
+        // Address column
         printf("  %s%08lx%s  ", COL(HEX_ADDR), (unsigned long)(offset + i), COL(CLR_RST));
 
+        // Hex bytes
         for (int j = 0; j < 16; j++) {
             if (i + j < rd) {
                 uint8_t b = buf[i + j];
                 const char *col;
-                
+
+                // Color by byte value
                 if (b == 0x00)
-                    col = HEX_NULL;
+                    col = HEX_NULL;   // null = dim
                 else if (b < 0x20)
-                    col = HEX_LOW;
+                    col = HEX_LOW;    // control = red
                 else if (b < 0x7f)
-                    col = HEX_PRINT;
+                    col = HEX_PRINT;  // printable = green
                 else
-                    col = HEX_HIGH;
-                
+                    col = HEX_HIGH;   // high = yellow
+
                 printf("%s%02x%s ", COL(col), b, COL(CLR_RST));
             } else {
                 printf("   ");
             }
-            if (j == 7) printf(" ");
+            if (j == 7) printf(" ");  // gap in middle
         }
 
+        // ASCII column
         printf(" %s|%s", COL(CLR_DIM), COL(CLR_RST));
         for (int j = 0; j < 16 && i + j < rd; j++) {
             uint8_t c = buf[i + j];
@@ -831,6 +940,11 @@ void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
 
     free(buf);
 }
+
+
+// Cleanup
+// Free all allocated memory. Call this when done with an ElfFile.
+// 
 
 void elf_free(ElfFile *elf)
 {

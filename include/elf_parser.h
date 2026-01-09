@@ -59,4 +59,7 @@ void elf_free(ElfFile *elf);
 int elf_find_section(const ElfFile *elf, const char *name, uint64_t *off, uint64_t *size);
 void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len);
 
+/* strings extraction */
+void elf_strings(const ElfFile *elf, const char *section, size_t min_len);
+
 #endif

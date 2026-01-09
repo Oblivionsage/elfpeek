@@ -41,6 +41,7 @@ static int cmd_entry(int argc, char **argv);
 static int cmd_symbols(int argc, char **argv);
 static int cmd_resolve(int argc, char **argv);
 static int cmd_dump(int argc, char **argv);
+static int cmd_strings(int argc, char **argv);
 static int cmd_help(int argc, char **argv);
 static int cmd_quit(int argc, char **argv);
 
@@ -55,6 +56,7 @@ static struct command cmds[] = {
     {"symbols",  "sym", "symbols [dyn|sym]     dump symbol tables",       cmd_symbols,  1},
     {"resolve",  "r",   "resolve <addr>        resolve virtual address",  cmd_resolve,  1},
     {"dump",     "d",   "dump <.sec|@off> [n]  hex dump",                  cmd_dump,     1},
+    {"strings",  "str", "strings [.sec] [min]  extract strings",          cmd_strings,  1},
     {"help",     "?",   "help [cmd]            show help",                cmd_help,     0},
     {"quit",     "q",   "quit                  exit",                     cmd_quit,     0},
     {NULL, NULL, NULL, NULL, 0}
@@ -250,6 +252,26 @@ static int cmd_dump(int argc, char **argv)
     }
 
     elf_hexdump(&g_elf, off, len);
+    return 0;
+}
+
+static int cmd_strings(int argc, char **argv)
+{
+    const char *section = ".rodata";
+    size_t min_len = 4;
+
+    if (argc > 1) {
+        if (argv[1][0] == '.') {
+            section = argv[1];
+            if (argc > 2)
+                min_len = strtoull(argv[2], NULL, 0);
+        } else {
+            min_len = strtoull(argv[1], NULL, 0);
+        }
+    }
+
+    if (min_len < 1) min_len = 4;
+    elf_strings(&g_elf, section, min_len);
     return 0;
 }
 

@@ -946,6 +946,86 @@ void elf_hexdump(const ElfFile *elf, uint64_t offset, size_t len)
 // Free all allocated memory. Call this when done with an ElfFile.
 // 
 
+
+/* Extract printable strings from a section */
+void elf_strings(const ElfFile *elf, const char *section, size_t min_len)
+{
+    if (!elf->path)
+        return;
+
+    uint64_t off, size;
+    const char *sec = section ? section : ".rodata";
+    
+    if (elf_find_section(elf, sec, &off, &size) < 0) {
+        fprintf(stderr, "%serror:%s section '%s' not found\n", 
+                COL(CLR_RED), COL(CLR_RST), sec);
+        return;
+    }
+
+    FILE *fp = fopen(elf->path, "rb");
+    if (!fp) {
+        fprintf(stderr, "%serror:%s can't reopen file\n", COL(CLR_RED), COL(CLR_RST));
+        return;
+    }
+
+    uint8_t *buf = malloc(size);
+    if (!buf) {
+        fclose(fp);
+        return;
+    }
+
+    fseek(fp, off, SEEK_SET);
+    size_t rd = fread(buf, 1, size, fp);
+    fclose(fp);
+
+    printf("\n%s[STRINGS from %s]%s (min %zu chars)\n", 
+           COL(CLR_CYN), sec, COL(CLR_RST), min_len);
+
+    size_t start = 0;
+    int in_string = 0;
+    size_t count = 0;
+
+    for (size_t i = 0; i < rd; i++) {
+        uint8_t c = buf[i];
+        int printable = (c >= 0x20 && c < 0x7f) || c == '\t';
+
+        if (printable) {
+            if (!in_string) {
+                start = i;
+                in_string = 1;
+            }
+        } else {
+            if (in_string) {
+                size_t len = i - start;
+                if (len >= min_len) {
+                    printf("  %s%08lx%s  ", COL(HEX_ADDR), 
+                           (unsigned long)(off + start), COL(CLR_RST));
+                    for (size_t j = start; j < i; j++)
+                        putchar(buf[j]);
+                    printf("\n");
+                    count++;
+                }
+                in_string = 0;
+            }
+        }
+    }
+
+    if (in_string) {
+        size_t len = rd - start;
+        if (len >= min_len) {
+            printf("  %s%08lx%s  ", COL(HEX_ADDR), 
+                   (unsigned long)(off + start), COL(CLR_RST));
+            for (size_t j = start; j < rd; j++)
+                putchar(buf[j]);
+            printf("\n");
+            count++;
+        }
+    }
+
+    printf("\n  %s%zu strings found%s\n", COL(CLR_DIM), count, COL(CLR_RST));
+    free(buf);
+}
+
 void elf_free(ElfFile *elf)
 {
     free(elf->phdrs);

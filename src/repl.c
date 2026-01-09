@@ -1,4 +1,8 @@
-// src/repl.c
+/*
+ * src/repl.c - Interactive shell for elfpeek
+ * Provides command-line interface for exploring ELF binaries
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,9 +15,9 @@
 #include <readline/history.h>
 #endif
 
-/* Prompt is now dynamic, see get_prompt() */
 #define MAX_ARGS 16
 
+/* Global state - one file at a time */
 static ElfFile g_elf;
 static int g_file_open = 0;
 
@@ -27,7 +31,7 @@ struct command {
     int needs_file;
 };
 
-/* forward decls */
+/* Forward declarations */
 static int cmd_open(int argc, char **argv);
 static int cmd_close(int argc, char **argv);
 static int cmd_info(int argc, char **argv);
@@ -40,6 +44,7 @@ static int cmd_dump(int argc, char **argv);
 static int cmd_help(int argc, char **argv);
 static int cmd_quit(int argc, char **argv);
 
+/* Command table - name, alias, help text, handler, needs_file */
 static struct command cmds[] = {
     {"open",     "o",   "open <path>           open ELF file",            cmd_open,     0},
     {"close",    NULL,  "close                 close current file",       cmd_close,    1},
@@ -55,24 +60,28 @@ static struct command cmds[] = {
     {NULL, NULL, NULL, NULL, 0}
 };
 
+/* Dynamic prompt - shows filename when open */
 static const char *get_prompt(void)
 {
     static char prompt[256];
+    
     if (g_file_open && g_elf.path) {
         const char *name = strrchr(g_elf.path, '/');
         name = name ? name + 1 : g_elf.path;
-        snprintf(prompt, sizeof(prompt), "%s(%s:%s)%s ", 
+        snprintf(prompt, sizeof(prompt), "%s(%s:%s)%s ",
                  COL(CLR_BGRN), "elfpeek", name, COL(CLR_RST));
     } else {
-        snprintf(prompt, sizeof(prompt), "%s(elfpeek)%s ", 
+        snprintf(prompt, sizeof(prompt), "%s(elfpeek)%s ",
                  COL(CLR_CYN), COL(CLR_RST));
     }
     return prompt;
 }
 
+/* Read input line - uses readline if available */
 static char *read_line(void)
 {
     const char *prompt = get_prompt();
+    
 #ifdef HAVE_READLINE
     char *line = readline(prompt);
     if (line && *line)
@@ -89,6 +98,7 @@ static char *read_line(void)
 #endif
 }
 
+/* Split line into argv-style tokens */
 static int tokenize(char *line, char **argv, int max)
 {
     int argc = 0;
@@ -105,6 +115,7 @@ static int tokenize(char *line, char **argv, int max)
     return argc;
 }
 
+/* Find command by name or alias */
 static struct command *find_cmd(const char *name)
 {
     for (struct command *c = cmds; c->name; c++) {
@@ -116,7 +127,7 @@ static struct command *find_cmd(const char *name)
     return NULL;
 }
 
-/* ---------- handlers ---------- */
+/* Command handlers - return 0 to continue, -1 to quit */
 
 static int cmd_open(int argc, char **argv)
 {
@@ -223,9 +234,11 @@ static int cmd_dump(int argc, char **argv)
         len = strtoull(argv[2], NULL, 0);
 
     if (argv[1][0] == '@') {
+        /* raw file offset */
         off = strtoull(argv[1] + 1, NULL, 0);
-        size = len; // we'll bounds-check in hexdump
+        size = len;
     } else if (argv[1][0] == '.') {
+        /* section name */
         if (elf_find_section(&g_elf, argv[1], &off, &size) < 0) {
             fprintf(stderr, "section '%s' not found\n", argv[1]);
             return 0;
@@ -268,8 +281,7 @@ static int cmd_quit(int argc, char **argv)
     return -1;
 }
 
-/* ---------- main loop ---------- */
-
+/* Main REPL loop */
 void repl_run(void)
 {
     char *line;
@@ -280,6 +292,7 @@ void repl_run(void)
 
     while ((line = read_line()) != NULL) {
         argc = tokenize(line, argv, MAX_ARGS);
+        
         if (argc == 0) {
 #ifdef HAVE_READLINE
             free(line);
@@ -288,6 +301,7 @@ void repl_run(void)
         }
 
         struct command *cmd = find_cmd(argv[0]);
+        
         if (!cmd) {
             fprintf(stderr, "unknown command '%s'\n", argv[0]);
         } else if (cmd->needs_file && !g_file_open) {
